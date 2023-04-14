@@ -8,8 +8,10 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 //Three variables
 let camera, scene, renderer;
 let player;
+let headModel;
 let controllerL, controllerR;
 let controllerGripL, controllerGripR;
+let dolly;
 
 //Peer variables
 let conns = [];
@@ -17,13 +19,13 @@ let peer = new Peer();
 let peerID;
 let remotePeerID;
 
+const loader = new GLTFLoader();
 
 init();
 animate();
 
 // Three.js Code
-function init(){
-	const loader = new GLTFLoader();
+function init(){	
 
 	loader.load( '/models/floor_no_mat.glb', function ( gltf ) {
 		scene.add( gltf.scene );
@@ -32,7 +34,7 @@ function init(){
 	} );
 
 	scene = new THREE.Scene();
-	camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 500 );
+	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
 	renderer = new THREE.WebGLRenderer();
 	renderer.setSize( window.innerWidth, window.innerHeight );
 	renderer.outputEncoding = THREE.sRGBEncoding;
@@ -46,8 +48,8 @@ function init(){
 	scene.background = new THREE.Color( 0x505050 );
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
 
-	camera.position.set( 0, 0, 0 );
-
+	camera.position.set( 0, 1.6, 3 );
+	
 	// controllers
 	function onSelectStart() {
 		this.userData.isSelecting = true;
@@ -57,33 +59,26 @@ function init(){
 		this.userData.isSelecting = false;
 	}
 
-	controllerL = renderer.xr.getController( 0 );
-	controllerL.addEventListener( 'selectstart', onSelectStart );
-	controllerL.addEventListener( 'selectend', onSelectEnd );
+	controllerL = renderer.xr.getController(0);
 	controllerL.addEventListener( 'connected', function ( event ) {
-
 		this.add( buildController() );
-
+		controllerL.gamepad = event.data.gamepad;
 	} );
+	
 	controllerL.addEventListener( 'disconnected', function () {
-
 		this.remove( this.children[ 0 ] );
-
 	} );
 	scene.add( controllerL );
 
 	controllerR = renderer.xr.getController( 1 );
 	controllerR.addEventListener( 'selectstart', onSelectStart );
 	controllerR.addEventListener( 'selectend', onSelectEnd );
-	controllerR.addEventListener( 'connected', function ( event ) {
-
+	controllerR.addEventListener( 'connected', function () {
 		this.add( buildController() );
-
 	} );
+
 	controllerR.addEventListener( 'disconnected', function () {
-
 		this.remove( this.children[ 0 ] );
-
 	} );
 	scene.add( controllerR );
 
@@ -97,6 +92,15 @@ function init(){
 	controllerGripR.add( controllerModelFactory.createControllerModel( controllerGripR ) );
 	scene.add( controllerGripR );
 
+	dolly = new THREE.Group();
+    dolly.position.set(0, 0, 0);
+    dolly.name = "dolly";
+    scene.add(dolly);
+    dolly.add(camera);
+    dolly.add(controllerL);
+    dolly.add(controllerR);
+    dolly.add(controllerGripL);
+    dolly.add(controllerGripR);
 }
 
 function buildController() {
@@ -112,13 +116,26 @@ function buildController() {
 	return new THREE.Line( geometry, material );
 }
 
+function updateCameraPos() {
+	const input = controllerL.gamepad.axes;
+  
+	// Get joystick input
+	const x = input[0];
+	const y = input[1];
+  
+	// Use joystick input to move camera
+	dolly.position.x += x * 0.1;
+	dolly.position.y += y * 0.1;
+}
+
 function animate() {
+	if(controllerL.gamepad)
+	updateCameraPos()
+
 	renderer.setAnimationLoop(render);
 }
 
 function render(){
-
-	
 
 	renderer.render( scene, camera );
 }
