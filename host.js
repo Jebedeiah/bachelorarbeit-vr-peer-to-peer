@@ -14,8 +14,9 @@ let controllerGripL, controllerGripR;
 let dolly;
 
 //Peer variables
+let remotePeers = ["host"];
 let conns = [];
-let peer = new Peer();
+let peer = new Peer("host");
 let peerID;
 let remotePeerID;
 
@@ -147,41 +148,49 @@ peer.on('open', function(id) {
 	console.log('My peer ID is: ' + peerID);
 
 	// Always show current PeerID
-	let peerIdText = document.createElement('div');
-	peerIdText.style.position = 'absolute';
-	peerIdText.style.backgroundColor = "black";
-	peerIdText.style.color = "white";
-	peerIdText.innerText = peerID;
-	peerIdText.style.bottom = 0;
-	peerIdText.style.right = 0;
-	peerIdText.style.padding = 2 + 'px';
-	document.body.appendChild(peerIdText);
+	// let peerIdText = document.createElement('div');
+	// peerIdText.style.position = 'absolute';
+	// peerIdText.style.backgroundColor = "black";
+	// peerIdText.style.color = "white";
+	// peerIdText.innerText = peerID;
+	// peerIdText.style.bottom = 0;
+	// peerIdText.style.right = 0;
+	// peerIdText.style.padding = 2 + 'px';
+	// document.body.appendChild(peerIdText);
 });
 
 
 
-const connect = () => {
-    const conn = peer.connect(remotePeerID)
-    conn.on('open', () => {
-      conns.push(conn);
-      console.log("Connection established with", conn.peer);
+// const connect = () => {
+//     const conn = peer.connect(remotePeerID)
+//     conn.on('open', () => {
+//       remotePeers.push(conn);
+//       console.log("Connection established with", conn.peer);
 
-	  conn.on('data', (data) => {
-		console.log(data);
-	  });
+// 	  conn.on('data', (data) => {
+// 		console.log(data);
+// 	  });
   
-	  // Send messages
-	  conn.send('Hello!');
-	});
-}
+// 	  // Send messages
+// 	  conn.send('Hello!');
+// 	});
+// }
 
 peer.on('connection', (conn) => {
-	conns.push(conn);
-	conn.on('data', (data) => {		
-	  // Will print 'hi!'
-	  console.log(data);
-	  conn.send('Hi!');
+	conn.on('open', () => {
+		conn.send(remotePeers);
+		console.log("Connection established with", conn.peer);
+		conn.on('data', (data) => {	
+			console.log(data);			
+		});
+		conns.push(conn);
+		remotePeers.push(conn.peer);
 	});
+});
+
+peer.on('error', function (err) {
+	console.log(err);
+	// alert('' + err);
 });
 
 const updateValue = (e) => {
@@ -189,21 +198,21 @@ const updateValue = (e) => {
 }
 
 //Connect Button
-let connectButton = document.createElement('button');
-connectButton.style.position = 'absolute';
-connectButton.textContent = 'Connect';
-connectButton.style.left = 'calc(50% - 40px)';
-connectButton.style.bottom = 80 + 'px';
-connectButton.style.width = 80 + 'px';
-document.body.appendChild(connectButton);
-connectButton.addEventListener("click", connect);
+// let connectButton = document.createElement('button');
+// connectButton.style.position = 'absolute';
+// connectButton.textContent = 'Connect';
+// connectButton.style.left = 'calc(50% - 40px)';
+// connectButton.style.bottom = 80 + 'px';
+// connectButton.style.width = 80 + 'px';
+// document.body.appendChild(connectButton);
+// connectButton.addEventListener("click", connect);
 
 //Textfield for remote ID
-let textField = document.createElement("INPUT");
-textField.setAttribute("type", "text");
-textField.style.position = 'absolute';
-textField.style.left = 'calc(50% - 150px)';
-textField.style.bottom = 120 + 'px';
-textField.style.width = 300 + 'px';
-document.body.appendChild(textField);
-textField.addEventListener("input", updateValue);
+// let textField = document.createElement("INPUT");
+// textField.setAttribute("type", "text");
+// textField.style.position = 'absolute';
+// textField.style.left = 'calc(50% - 150px)';
+// textField.style.bottom = 120 + 'px';
+// textField.style.width = 300 + 'px';
+// document.body.appendChild(textField);
+// textField.addEventListener("input", updateValue);

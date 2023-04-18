@@ -1,0 +1,212 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import Peer from 'peerjs';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+//Three variables
+let camera, scene, renderer;
+let player;
+let headModel;
+let controllerL, controllerR;
+let controllerGripL, controllerGripR;
+let dolly;
+
+//Peer variables
+let remotePeers = [];
+let conns = [];
+let peer = new Peer();
+let peerID;
+let remotePeerID;
+let firstMessage = true;
+
+const loader = new GLTFLoader();
+
+init();
+animate();
+
+// Three.js Code
+function init(){	
+
+	loader.load( '/models/floor_no_mat.glb', function ( gltf ) {
+		scene.add( gltf.scene );
+	}, undefined, function ( error ) {
+		console.error( error );
+	} );
+
+	scene = new THREE.Scene();
+	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
+	renderer = new THREE.WebGLRenderer();
+	renderer.setSize( window.innerWidth, window.innerHeight );
+	renderer.outputEncoding = THREE.sRGBEncoding;
+	document.body.appendChild( renderer.domElement );
+	document.body.appendChild( VRButton.createButton( renderer ) );
+	renderer.xr.enabled = true;
+
+	const environment = new RoomEnvironment();
+	const pmremGenerator = new THREE.PMREMGenerator( renderer );
+
+	scene.background = new THREE.Color( 0x505050 );
+	scene.environment = pmremGenerator.fromScene( environment ).texture;
+
+	camera.position.set( 0, 1.6, 3 );
+	
+	// controllers
+	function onSelectStart() {
+		this.userData.isSelecting = true;
+	}
+
+	function onSelectEnd() {
+		this.userData.isSelecting = false;
+	}
+
+	controllerL = renderer.xr.getController(0);
+	controllerL.addEventListener( 'connected', function ( event ) {
+		this.add( buildController() );
+		controllerL.gamepad = event.data.gamepad;
+	} );
+	
+	controllerL.addEventListener( 'disconnected', function () {
+		this.remove( this.children[ 0 ] );
+	} );
+	scene.add( controllerL );
+
+	controllerR = renderer.xr.getController( 1 );
+	controllerR.addEventListener( 'selectstart', onSelectStart );
+	controllerR.addEventListener( 'selectend', onSelectEnd );
+	controllerR.addEventListener( 'connected', function () {
+		this.add( buildController() );
+	} );
+
+	controllerR.addEventListener( 'disconnected', function () {
+		this.remove( this.children[ 0 ] );
+	} );
+	scene.add( controllerR );
+
+	const controllerModelFactory = new XRControllerModelFactory();
+
+	controllerGripL = renderer.xr.getControllerGrip( 0 );
+	controllerGripL.add( controllerModelFactory.createControllerModel( controllerGripL ) );
+	scene.add( controllerGripL );
+
+	controllerGripR = renderer.xr.getControllerGrip( 1 );
+	controllerGripR.add( controllerModelFactory.createControllerModel( controllerGripR ) );
+	scene.add( controllerGripR );
+
+	dolly = new THREE.Group();
+    dolly.position.set(0, 0, 0);
+    dolly.name = "dolly";
+    scene.add(dolly);
+    dolly.add(camera);
+    dolly.add(controllerL);
+    dolly.add(controllerR);
+    dolly.add(controllerGripL);
+    dolly.add(controllerGripR);
+}
+
+function buildController() {
+
+	let geometry, material;
+
+	geometry = new THREE.BufferGeometry();
+	geometry.setAttribute( 'position', new THREE.Float32BufferAttribute( [ 0, 0, 0, 0, 0, - 1 ], 3 ) );
+	geometry.setAttribute( 'color', new THREE.Float32BufferAttribute( [ 0.5, 0.5, 0.5, 0, 0, 0 ], 3 ) );
+
+	material = new THREE.LineBasicMaterial( { vertexColors: true, blending: THREE.AdditiveBlending } );
+
+	return new THREE.Line( geometry, material );
+}
+
+function updateCameraPos() {
+	const input = controllerL.gamepad.axes;
+  
+	// Get joystick input
+	const x = input[0];
+	const y = input[1];
+  
+	// Use joystick input to move camera
+	dolly.position.x += x * 0.1;
+	dolly.position.y += y * 0.1;
+}
+
+function animate() {
+	if(controllerL.gamepad)
+	updateCameraPos()
+
+	renderer.setAnimationLoop(render);
+}
+
+function render(){
+	renderer.render( scene, camera );
+}
+
+
+//Peer.js Code
+peer.on('open', function(id) {
+	peerID = id;
+	console.log('My peer ID is: ' + peerID);
+	remotePeerID = "host"
+	connect();
+});
+
+
+//Connect to host and other available Peers
+const connect = () => {
+    const hostConn = peer.connect(remotePeerID)
+    hostConn.on('open', () => {
+		console.log("Connection established with", hostConn.peer);
+		conns.push(hostConn);
+
+		hostConn.on('data', (data) => {
+			if(firstMessage){
+				remotePeers = data;
+				for(let id of remotePeers) {
+					if(id === "host") continue
+					const newConn = peer.connect(id);
+					newConn.on('open', () => {
+						conns.push(newConn);
+						console.log("Connection established with", newConn.peer);
+
+						newConn.on('data', (data) =>{
+							console.log(data);
+						});
+					});
+				}
+				firstMessage = false;
+			}
+			else console.log(data);
+		});
+	});
+}
+
+//Answer incoming connection
+peer.on('connection', (conn) => {
+	conn.on('open', () => {
+
+		remotePeers.push(conn.peer);		
+		console.log("Connection established with " + conn.peer);
+		conns.push(conn);
+		conn.on('data', (data) => {		
+			console.log(data);
+		});
+	});
+});
+
+
+//Send something to all current connections
+function sendSth(){
+	for(let el of conns){
+		el.send("heyho");
+	}
+}
+
+//Connect Button
+let connectButton = document.createElement('button');
+connectButton.style.position = 'absolute';
+connectButton.textContent = 'Connect';
+connectButton.style.left = 'calc(50% - 40px)';
+connectButton.style.bottom = 80 + 'px';
+connectButton.style.width = 80 + 'px';
+document.body.appendChild(connectButton);
+connectButton.addEventListener("click", sendSth);
