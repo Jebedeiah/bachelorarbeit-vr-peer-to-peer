@@ -2,16 +2,16 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import Peer from 'peerjs';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 //Three variables
-let camera, scene, renderer;
-let player;
-let headModel;
-let controllerL, controllerR;
-let controllerGripL, controllerGripR;
+let camera, dummyCam, scene, renderer;
 let dolly;
+let players = [];
+let player;
+let controller1, controller2;
+let controllerGrip1, controllerGrip2;
+let gamepad;
 
 //Peer variables
 let remotePeers = ["host"];
@@ -28,11 +28,19 @@ animate();
 // Three.js Code
 function init(){	
 
-	loader.load( '/models/floor_no_mat.glb', function ( gltf ) {
-		scene.add( gltf.scene );
-	}, undefined, function ( error ) {
-		console.error( error );
-	} );
+	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
+	// 	const floor = gltf.scene;
+	// 	floor.traverse((obj) => {
+	// 		if(obj.isMesh){
+	// 				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})
+	// 			}
+	// 		}
+	// 	)
+	// 	scene.add( gltf.scene );
+	// }, undefined, function ( error ) {
+	// 	console.error( error );
+	// } );
+
 
 	scene = new THREE.Scene();
 	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
@@ -49,7 +57,32 @@ function init(){
 	scene.background = new THREE.Color( 0x505050 );
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
 
-	camera.position.set( 0, 1.6, 3 );
+	camera.position.set( 0, 1.6, 0 );	
+
+	//Player
+	const playerGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
+	const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
+	player = new THREE.Mesh( playerGeometry, playerMaterial );
+	player.position.set(0,1.6,0);
+
+	//Test cube
+	const testGeometry = new THREE.BoxGeometry( 1, 1, 1 );
+	const testMaterial = new THREE.MeshStandardMaterial( { color: 0x991100 } );
+	const cube = new THREE.Mesh( testGeometry, testMaterial );
+	cube.position.set(0, 1, -5);
+	scene.add( cube );
+
+	//Add floor
+	let ground = new THREE.Mesh(
+		new THREE.PlaneGeometry(50, 50, 10, 10),
+		new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: true })
+	);
+
+	ground.rotation.x -= Math.PI / 2; // Rotate the floor 90 degrees
+	ground.receiveShadow = true;
+ 	scene.add(ground);
+
+	
 	
 	// controllers
 	function onSelectStart() {
@@ -60,48 +93,51 @@ function init(){
 		this.userData.isSelecting = false;
 	}
 
-	controllerL = renderer.xr.getController(0);
-	controllerL.addEventListener( 'connected', function ( event ) {
-		this.add( buildController() );
-		controllerL.gamepad = event.data.gamepad;
-	} );
+	controller1 = renderer.xr.getController(0);
+	controller1.addEventListener( 'connected', function ( event ) {
+		this.add( buildController() );	
+		gamepad = event.data.gamepad;
+	});
 	
-	controllerL.addEventListener( 'disconnected', function () {
+	controller1.addEventListener( 'disconnected', function () {
 		this.remove( this.children[ 0 ] );
 	} );
-	scene.add( controllerL );
+	scene.add( controller1 );
 
-	controllerR = renderer.xr.getController( 1 );
-	controllerR.addEventListener( 'selectstart', onSelectStart );
-	controllerR.addEventListener( 'selectend', onSelectEnd );
-	controllerR.addEventListener( 'connected', function () {
+	controller2 = renderer.xr.getController( 1 );
+	controller2.addEventListener( 'selectstart', onSelectStart );
+	controller2.addEventListener( 'selectend', onSelectEnd );
+	controller2.addEventListener( 'connected', function ( event ) {
 		this.add( buildController() );
-	} );
+	});
 
-	controllerR.addEventListener( 'disconnected', function () {
+	controller2.addEventListener( 'disconnected', function () {
 		this.remove( this.children[ 0 ] );
 	} );
-	scene.add( controllerR );
+	scene.add( controller2 );
 
 	const controllerModelFactory = new XRControllerModelFactory();
 
-	controllerGripL = renderer.xr.getControllerGrip( 0 );
-	controllerGripL.add( controllerModelFactory.createControllerModel( controllerGripL ) );
-	scene.add( controllerGripL );
+	controllerGrip1 = renderer.xr.getControllerGrip( 0 );
+	controllerGrip1.add( controllerModelFactory.createControllerModel( controllerGrip1 ) );
+	scene.add( controllerGrip1 );
 
-	controllerGripR = renderer.xr.getControllerGrip( 1 );
-	controllerGripR.add( controllerModelFactory.createControllerModel( controllerGripR ) );
-	scene.add( controllerGripR );
+	controllerGrip2 = renderer.xr.getControllerGrip( 1 );
+	controllerGrip2.add( controllerModelFactory.createControllerModel( controllerGrip2 ) );
+	scene.add( controllerGrip2 );
 
 	dolly = new THREE.Group();
+	dummyCam = new THREE.Group();
+	
     dolly.position.set(0, 0, 0);
-    dolly.name = "dolly";
     scene.add(dolly);
     dolly.add(camera);
-    dolly.add(controllerL);
-    dolly.add(controllerR);
-    dolly.add(controllerGripL);
-    dolly.add(controllerGripR);
+	camera.add(dummyCam);
+	dolly.add(player);
+    dolly.add(controller1);
+    dolly.add(controller2);
+    dolly.add(controllerGrip1);
+    dolly.add(controllerGrip2);
 }
 
 function buildController() {
@@ -117,27 +153,31 @@ function buildController() {
 	return new THREE.Line( geometry, material );
 }
 
-function updateCameraPos() {
-	const input = controllerL.gamepad.axes;
-  
-	// Get joystick input
-	const x = input[0];
-	const y = input[1];
-  
-	// Use joystick input to move camera
-	dolly.position.x += x * 0.1;
-	dolly.position.y += y * 0.1;
+function updateOrientation() {
+	// Get joystick input		
+	if(gamepad){
+		let input;
+		input = gamepad.axes;
+
+		let x = input[2];
+		let z = input[3];
+	
+		// Use joystick input to move camera
+		const quaternion = dolly.quaternion.clone();
+		dummyCam.getWorldQuaternion(dolly.quaternion);
+		dolly.translateX(x * 0.05);
+		dolly.translateZ(z * 0.05);
+		dolly.position.y = 0;
+		dolly.quaternion.copy(quaternion);
+	}
 }
 
-function animate() {
-	if(controllerL.gamepad)
-	updateCameraPos()
-
+function animate() {		
 	renderer.setAnimationLoop(render);
 }
 
 function render(){
-
+	updateOrientation();
 	renderer.render( scene, camera );
 }
 //Peer.js Code
@@ -146,17 +186,6 @@ function render(){
 peer.on('open', function(id) {
 	peerID = id;
 	console.log('My peer ID is: ' + peerID);
-
-	// Always show current PeerID
-	// let peerIdText = document.createElement('div');
-	// peerIdText.style.position = 'absolute';
-	// peerIdText.style.backgroundColor = "black";
-	// peerIdText.style.color = "white";
-	// peerIdText.innerText = peerID;
-	// peerIdText.style.bottom = 0;
-	// peerIdText.style.right = 0;
-	// peerIdText.style.padding = 2 + 'px';
-	// document.body.appendChild(peerIdText);
 });
 
 
@@ -180,22 +209,33 @@ peer.on('connection', (conn) => {
 	conn.on('open', () => {
 		conn.send(remotePeers);
 		console.log("Connection established with", conn.peer);
-		conn.on('data', (data) => {	
-			console.log(data);			
-		});
+
+		const oppGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
+		const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
+		let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
+		scene.add(opponent);
+		players.push(opponent);
 		conns.push(conn);
+		connData();
 		remotePeers.push(conn.peer);
 	});
 });
+
+const connData = () => {
+	for(let i = 0; i < conns.length; i++){
+		
+		conns[i].on('data', (data) => {	
+			console.log(data[0].y);
+			players[i].position.set(data[0].x, data[0].y, data[0].z);
+		});
+	}
+}
+
 
 peer.on('error', function (err) {
 	console.log(err);
 	// alert('' + err);
 });
-
-const updateValue = (e) => {
-	remotePeerID = e.target.value;
-}
 
 //Connect Button
 // let connectButton = document.createElement('button');

@@ -2,16 +2,16 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import Peer from 'peerjs';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 //Three variables
-let camera, scene, renderer;
-let player;
-let headModel;
-let controllerL, controllerR;
-let controllerGripL, controllerGripR;
+let camera, dummyCam, scene, renderer;
 let dolly;
+let players = [];
+let player;
+let controller1, controller2;
+let controllerGrip1, controllerGrip2;
+let gamepad;
 
 //Peer variables
 let remotePeers = [];
@@ -29,11 +29,19 @@ animate();
 // Three.js Code
 function init(){	
 
-	loader.load( '/models/floor_no_mat.glb', function ( gltf ) {
-		scene.add( gltf.scene );
-	}, undefined, function ( error ) {
-		console.error( error );
-	} );
+	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
+	// 	const floor = gltf.scene;
+	// 	floor.traverse((obj) => {
+	// 		if(obj.isMesh){
+	// 				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})
+	// 			}
+	// 		}
+	// 	)
+	// 	scene.add( gltf.scene );
+	// }, undefined, function ( error ) {
+	// 	console.error( error );
+	// } );
+
 
 	scene = new THREE.Scene();
 	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
@@ -50,7 +58,32 @@ function init(){
 	scene.background = new THREE.Color( 0x505050 );
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
 
-	camera.position.set( 0, 1.6, 3 );
+	camera.position.set( 0, 1.6, 0 );
+
+	//Player
+	const playerGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
+	const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
+	player = new THREE.Mesh( playerGeometry, playerMaterial );
+	player.position.set(0,1.6,0);
+
+	//Test cube
+	const geometry = new THREE.BoxGeometry( 1, 1, 1 );
+	const material = new THREE.MeshStandardMaterial( { color: 0x991100 } );
+	const cube = new THREE.Mesh( geometry, material );
+	cube.position.set(0, 1, -5);
+	scene.add( cube );
+
+	//Add floor
+	let ground = new THREE.Mesh(
+		new THREE.PlaneGeometry(50, 50, 10, 10),
+		new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: true })
+	);
+
+	ground.rotation.x -= Math.PI / 2; // Rotate the floor 90 degrees
+	ground.receiveShadow = true;
+ 	scene.add(ground);
+
+	
 	
 	// controllers
 	function onSelectStart() {
@@ -61,48 +94,53 @@ function init(){
 		this.userData.isSelecting = false;
 	}
 
-	controllerL = renderer.xr.getController(0);
-	controllerL.addEventListener( 'connected', function ( event ) {
-		this.add( buildController() );
-		controllerL.gamepad = event.data.gamepad;
-	} );
+	controller1 = renderer.xr.getController(0);
+	controller1.addEventListener( 'connected', function ( event ) {
+		this.add( buildController() );	
+		gamepad = event.data.gamepad;
+	});
 	
-	controllerL.addEventListener( 'disconnected', function () {
+	controller1.addEventListener( 'disconnected', function () {
 		this.remove( this.children[ 0 ] );
 	} );
-	scene.add( controllerL );
+	scene.add( controller1 );
 
-	controllerR = renderer.xr.getController( 1 );
-	controllerR.addEventListener( 'selectstart', onSelectStart );
-	controllerR.addEventListener( 'selectend', onSelectEnd );
-	controllerR.addEventListener( 'connected', function () {
+	controller2 = renderer.xr.getController( 1 );
+	controller2.addEventListener( 'selectstart', onSelectStart );
+	controller2.addEventListener( 'selectend', onSelectEnd );
+	controller2.addEventListener( 'connected', function ( event ) {
 		this.add( buildController() );
-	} );
+	});
 
-	controllerR.addEventListener( 'disconnected', function () {
+	controller2.addEventListener( 'disconnected', function () {
 		this.remove( this.children[ 0 ] );
 	} );
-	scene.add( controllerR );
+	scene.add( controller2 );
 
 	const controllerModelFactory = new XRControllerModelFactory();
 
-	controllerGripL = renderer.xr.getControllerGrip( 0 );
-	controllerGripL.add( controllerModelFactory.createControllerModel( controllerGripL ) );
-	scene.add( controllerGripL );
+	controllerGrip1 = renderer.xr.getControllerGrip( 0 );
+	controllerGrip1.add( controllerModelFactory.createControllerModel( controllerGrip1 ) );
+	scene.add( controllerGrip1 );
 
-	controllerGripR = renderer.xr.getControllerGrip( 1 );
-	controllerGripR.add( controllerModelFactory.createControllerModel( controllerGripR ) );
-	scene.add( controllerGripR );
+	controllerGrip2 = renderer.xr.getControllerGrip( 1 );
+	controllerGrip2.add( controllerModelFactory.createControllerModel( controllerGrip2 ) );
+	scene.add( controllerGrip2 );
 
 	dolly = new THREE.Group();
-    dolly.position.set(0, 0, 0);
-    dolly.name = "dolly";
+	dummyCam = new THREE.Group();
+	
+    dolly.position.set(0, 0, -10);
+	dolly.rotation.y -= Math.PI;
     scene.add(dolly);
     dolly.add(camera);
-    dolly.add(controllerL);
-    dolly.add(controllerR);
-    dolly.add(controllerGripL);
-    dolly.add(controllerGripR);
+	camera.add(dummyCam);
+	dolly.add(player);
+    dolly.add(controller1);
+    dolly.add(controller2);
+    dolly.add(controllerGrip1);
+    dolly.add(controllerGrip2);
+	// dolly.matrixAutoUpdate = false;
 }
 
 function buildController() {
@@ -118,30 +156,35 @@ function buildController() {
 	return new THREE.Line( geometry, material );
 }
 
-function updateCameraPos() {
-	const input = controllerL.gamepad.axes;
-  
-	// Get joystick input
-	const x = input[0];
-	const y = input[1];
-  
-	// Use joystick input to move camera
-	dolly.position.x += x * 0.1;
-	dolly.position.y += y * 0.1;
+function updateOrientation() {
+	// Get joystick input		
+	if(gamepad){
+		let input;
+		input = gamepad.axes;
+
+		let x = input[2];
+		let z = input[3];
+	
+		// Use joystick input to move camera
+		const quaternion = dolly.quaternion.clone();
+		dummyCam.getWorldQuaternion(dolly.quaternion);
+		dolly.translateX(x * 0.05);
+		dolly.translateZ(z * 0.05);
+		dolly.position.y = 0;
+		// console.log(dolly.position, camera.position, dummyCam.position);
+		dolly.quaternion.copy(quaternion);
+	}
 }
 
-function animate() {
-	if(controllerL.gamepad)
-	updateCameraPos()
-
+function animate() {		
 	renderer.setAnimationLoop(render);
 }
 
 function render(){
+	updateOrientation();
+	sendPlayerData();
 	renderer.render( scene, camera );
 }
-
-
 //Peer.js Code
 peer.on('open', function(id) {
 	peerID = id;
@@ -195,18 +238,21 @@ peer.on('connection', (conn) => {
 
 
 //Send something to all current connections
-function sendSth(){
-	for(let el of conns){
-		el.send("heyho");
-	}
-}
+function sendPlayerData(){
+	if(conns.length > 0){
+		let controllerPos = new THREE.Vector3();
+		let cameraPos = new THREE.Vector3();
+		controllerGrip2.getWorldPosition(controllerPos);
+		dummyCam.getWorldPosition(cameraPos);
+		let posQuatData = [cameraPos, controllerPos];
+			// posQuatData.push(new THREE.Vector3(dolly.position));
+			// posQuatData.push(new THREE.Vector3(dolly.quaternion));
+			// posQuatData.push(new THREE.Vector3(controllerGrip2.position));
+			// posQuatData.push(new THREE.Vector3(controllerGrip2.quaternion));
 
-//Connect Button
-let connectButton = document.createElement('button');
-connectButton.style.position = 'absolute';
-connectButton.textContent = 'Connect';
-connectButton.style.left = 'calc(50% - 40px)';
-connectButton.style.bottom = 80 + 'px';
-connectButton.style.width = 80 + 'px';
-document.body.appendChild(connectButton);
-connectButton.addEventListener("click", sendSth);
+		for(let conn of conns){
+			conn.send(posQuatData);
+		}
+	}
+	
+}
