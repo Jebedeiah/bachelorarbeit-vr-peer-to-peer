@@ -7,27 +7,43 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 //Three variables
 let camera, dummyCam, scene, renderer;
 let dolly;
-let players = [];
+let otherPlayers = [];
+let otherPlayersWeapons = [];
 let player;
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let gamepad;
+
+//Ammo variables
+// let Ammo;
 
 //Peer variables
 let remotePeers = ["host"];
 let conns = [];
 let peer = new Peer("host");
 let peerID;
-let remotePeerID;
 
 const loader = new GLTFLoader();
 
-init();
-animate();
+window.addEventListener('DOMContentLoaded', () => {
+	init();
+	animate();
+})
+
 
 // Three.js Code
 function init(){	
 
+	//// Ammo.JS
+	// this.collisionConfiguration_ = new Ammo.btDefaultCollisionConfiguration();
+    // this.dispatcher_ = new Ammo.btCollisionDispatcher(this.collisionConfiguration_);
+    // this.broadphase_ = new Ammo.btDbvtBroadphase();
+    // this.solver_ = new Ammo.btSequentialImpulseConstraintSolver();
+    // this.physicsWorld_ = new Ammo.btDiscreteDynamicsWorld(
+    // this.dispatcher_, this.broadphase_, this.solver_, this.collisionConfiguration_);
+    // this.physicsWorld_.setGravity(new Ammo.btVector3(0, -100, 0));
+
+	//// GLTF Loader
 	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
 	// 	const floor = gltf.scene;
 	// 	floor.traverse((obj) => {
@@ -59,20 +75,13 @@ function init(){
 
 	camera.position.set( 0, 1.6, 0 );	
 
-	//Player
-	const playerGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
-	const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
-	player = new THREE.Mesh( playerGeometry, playerMaterial );
-	player.position.set(0,1.6,0);
+	// Player
+	// const playerGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
+	// const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
+	// player = new THREE.Mesh( playerGeometry, playerMaterial );
+	// player.position.set(0,1.6,0);
 
-	//Test cube
-	const testGeometry = new THREE.BoxGeometry( 1, 1, 1 );
-	const testMaterial = new THREE.MeshStandardMaterial( { color: 0x991100 } );
-	const cube = new THREE.Mesh( testGeometry, testMaterial );
-	cube.position.set(0, 1, -5);
-	scene.add( cube );
-
-	//Add floor
+	// Add floor
 	let ground = new THREE.Mesh(
 		new THREE.PlaneGeometry(50, 50, 10, 10),
 		new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: true })
@@ -133,7 +142,7 @@ function init(){
     scene.add(dolly);
     dolly.add(camera);
 	camera.add(dummyCam);
-	dolly.add(player);
+	// dolly.add(player);
     dolly.add(controller1);
     dolly.add(controller2);
     dolly.add(controllerGrip1);
@@ -178,9 +187,9 @@ function animate() {
 
 function render(){
 	updateOrientation();
+	sendPlayerData();
 	renderer.render( scene, camera );
 }
-//Peer.js Code
 
 
 peer.on('open', function(id) {
@@ -189,44 +198,27 @@ peer.on('open', function(id) {
 });
 
 
-
-// const connect = () => {
-//     const conn = peer.connect(remotePeerID)
-//     conn.on('open', () => {
-//       remotePeers.push(conn);
-//       console.log("Connection established with", conn.peer);
-
-// 	  conn.on('data', (data) => {
-// 		console.log(data);
-// 	  });
-  
-// 	  // Send messages
-// 	  conn.send('Hello!');
-// 	});
-// }
-
 peer.on('connection', (conn) => {
 	conn.on('open', () => {
 		conn.send(remotePeers);
 		console.log("Connection established with", conn.peer);
 
-		const oppGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
-		const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
-		let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
-		scene.add(opponent);
-		players.push(opponent);
+		//Create other Player in Scene
+		createOtherPlayer();
+
 		conns.push(conn);
-		connData();
+		receiveData();
 		remotePeers.push(conn.peer);
 	});
 });
 
-const connData = () => {
+const receiveData = () => {
 	for(let i = 0; i < conns.length; i++){
 		
 		conns[i].on('data', (data) => {	
-			console.log(data[0].y);
-			players[i].position.set(data[0].x, data[0].y, data[0].z);
+			// console.log(data[0], data[1]);
+			otherPlayers[i].position.set(data[0].x, data[0].y, data[0].z);
+			otherPlayersWeapons[i].position.set(data[1].x, data[1].y, data[1].z)
 		});
 	}
 }
@@ -237,22 +229,38 @@ peer.on('error', function (err) {
 	// alert('' + err);
 });
 
-//Connect Button
-// let connectButton = document.createElement('button');
-// connectButton.style.position = 'absolute';
-// connectButton.textContent = 'Connect';
-// connectButton.style.left = 'calc(50% - 40px)';
-// connectButton.style.bottom = 80 + 'px';
-// connectButton.style.width = 80 + 'px';
-// document.body.appendChild(connectButton);
-// connectButton.addEventListener("click", connect);
+//Send something to all current connections
+const sendPlayerData = () => {
+	if(conns.length > 0){
+		let controllerPos = new THREE.Vector3();
+		let cameraPos = new THREE.Vector3();
+		controllerGrip2.getWorldPosition(controllerPos);
+		dummyCam.getWorldPosition(cameraPos);
+		let posQuatData = [cameraPos, controllerPos];
+		// posQuatData.push(new THREE.Vector3(dolly.position));
+		// posQuatData.push(new THREE.Vector3(dolly.quaternion));
+		// posQuatData.push(new THREE.Vector3(controllerGrip2.position));
+		// posQuatData.push(new THREE.Vector3(controllerGrip2.quaternion));
 
-//Textfield for remote ID
-// let textField = document.createElement("INPUT");
-// textField.setAttribute("type", "text");
-// textField.style.position = 'absolute';
-// textField.style.left = 'calc(50% - 150px)';
-// textField.style.bottom = 120 + 'px';
-// textField.style.width = 300 + 'px';
-// document.body.appendChild(textField);
-// textField.addEventListener("input", updateValue);
+		for(let conn of conns){
+			conn.send(posQuatData);
+		}
+	}
+	
+}
+
+const createOtherPlayer = () => {
+	//Create other Player in Scene
+	const oppGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
+	const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
+	let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
+	scene.add(opponent);
+	otherPlayers.push(opponent);
+
+	//Create other Player's weapon in Scene
+	const oppWepGeometry = new THREE.BoxGeometry( 0.2, 0.2, 0.4 );
+	const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
+	let opponentsWeapon = new THREE.Mesh( oppWepGeometry, oppWepMaterial );
+	scene.add(opponentsWeapon);
+	otherPlayersWeapons.push(opponentsWeapon);
+}

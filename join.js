@@ -7,7 +7,8 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 //Three variables
 let camera, dummyCam, scene, renderer;
 let dolly;
-let players = [];
+let otherPlayers = [];
+let otherPlayersWeapons = [];
 let player;
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
@@ -59,19 +60,6 @@ function init(){
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
 
 	camera.position.set( 0, 1.6, 0 );
-
-	//Player
-	const playerGeometry = new THREE.CapsuleGeometry( 1, 1.6, 4, 8 );
-	const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
-	player = new THREE.Mesh( playerGeometry, playerMaterial );
-	player.position.set(0,1.6,0);
-
-	//Test cube
-	const geometry = new THREE.BoxGeometry( 1, 1, 1 );
-	const material = new THREE.MeshStandardMaterial( { color: 0x991100 } );
-	const cube = new THREE.Mesh( geometry, material );
-	cube.position.set(0, 1, -5);
-	scene.add( cube );
 
 	//Add floor
 	let ground = new THREE.Mesh(
@@ -135,12 +123,11 @@ function init(){
     scene.add(dolly);
     dolly.add(camera);
 	camera.add(dummyCam);
-	dolly.add(player);
+	// dolly.add(player);
     dolly.add(controller1);
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
-	// dolly.matrixAutoUpdate = false;
 }
 
 function buildController() {
@@ -205,20 +192,24 @@ const connect = () => {
 			if(firstMessage){
 				remotePeers = data;
 				for(let id of remotePeers) {
-					if(id === "host") continue
+
+					if(id === "host"){
+						createOtherPlayer();
+						receiveData();
+						continue;
+					} 
+
 					const newConn = peer.connect(id);
 					newConn.on('open', () => {
 						conns.push(newConn);
 						console.log("Connection established with", newConn.peer);
-
-						newConn.on('data', (data) =>{
-							console.log(data);
-						});
+						createOtherPlayer();
+						receiveData();
 					});
 				}
 				firstMessage = false;
 			}
-			else console.log(data);
+			// else console.log(data);
 		});
 	});
 }
@@ -229,30 +220,56 @@ peer.on('connection', (conn) => {
 
 		remotePeers.push(conn.peer);		
 		console.log("Connection established with " + conn.peer);
+		createOtherPlayer();
 		conns.push(conn);
-		conn.on('data', (data) => {		
-			console.log(data);
-		});
+		receiveData();
 	});
 });
 
 
 //Send something to all current connections
-function sendPlayerData(){
+const sendPlayerData = () => {
 	if(conns.length > 0){
 		let controllerPos = new THREE.Vector3();
 		let cameraPos = new THREE.Vector3();
 		controllerGrip2.getWorldPosition(controllerPos);
 		dummyCam.getWorldPosition(cameraPos);
 		let posQuatData = [cameraPos, controllerPos];
-			// posQuatData.push(new THREE.Vector3(dolly.position));
-			// posQuatData.push(new THREE.Vector3(dolly.quaternion));
-			// posQuatData.push(new THREE.Vector3(controllerGrip2.position));
-			// posQuatData.push(new THREE.Vector3(controllerGrip2.quaternion));
+		// posQuatData.push(new THREE.Vector3(dolly.position));
+		// posQuatData.push(new THREE.Vector3(dolly.quaternion));
+		// posQuatData.push(new THREE.Vector3(controllerGrip2.position));
+		// posQuatData.push(new THREE.Vector3(controllerGrip2.quaternion));
 
 		for(let conn of conns){
 			conn.send(posQuatData);
 		}
 	}
 	
+}
+
+const receiveData = () => {
+	for(let i = 0; i < conns.length; i++){
+		
+		conns[i].on('data', (data) => {	
+			// console.log(data[0], data[1]);
+			otherPlayers[i].position.set(data[0].x, data[0].y, data[0].z);
+			otherPlayersWeapons[i].position.set(data[1].x, data[1].y, data[1].z)
+		});
+	}
+}
+
+const createOtherPlayer = () => {
+	//Create other Player in Scene
+	const oppGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
+	const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
+	let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
+	scene.add(opponent);
+	otherPlayers.push(opponent);
+
+	//Create other Player's weapon in Scene
+	const oppWepGeometry = new THREE.BoxGeometry( 0.2, 0.2, 0.4 );
+	const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
+	let opponentsWeapon = new THREE.Mesh( oppWepGeometry, oppWepMaterial );
+	scene.add(opponentsWeapon);
+	otherPlayersWeapons.push(opponentsWeapon);
 }
