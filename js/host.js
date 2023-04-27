@@ -9,13 +9,19 @@ let camera, dummyCam, scene, renderer;
 let dolly;
 let otherPlayers = [];
 let otherPlayersWeapons = [];
-let player;
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let gamepad;
+const clock = new THREE.Clock();
 
-//Ammo variables
-// let Ammo;
+// Physics variables
+const gravityConstant = - 9.81;
+let collisionConfiguration;
+let dispatcher;
+let broadphase;
+let solver;
+let physicsWorld;
+let rigidBodies = [];
 
 //Peer variables
 let remotePeers = ["host"];
@@ -25,25 +31,19 @@ let peerID;
 
 const loader = new GLTFLoader();
 
-window.addEventListener('DOMContentLoaded', () => {
-	init();
-	animate();
-})
-
+window.addEventListener('DOMContentLoaded', async () => {
+	Ammo().then((lib) => {
+		Ammo = lib;
+		init();		
+	});
+});
 
 // Three.js Code
-function init(){	
+function init(){
 
-	//// Ammo.JS
-	// this.collisionConfiguration_ = new Ammo.btDefaultCollisionConfiguration();
-    // this.dispatcher_ = new Ammo.btCollisionDispatcher(this.collisionConfiguration_);
-    // this.broadphase_ = new Ammo.btDbvtBroadphase();
-    // this.solver_ = new Ammo.btSequentialImpulseConstraintSolver();
-    // this.physicsWorld_ = new Ammo.btDiscreteDynamicsWorld(
-    // this.dispatcher_, this.broadphase_, this.solver_, this.collisionConfiguration_);
-    // this.physicsWorld_.setGravity(new Ammo.btVector3(0, -100, 0));
+	initPhysics()
 
-	//// GLTF Loader
+	// GLTF Loader
 	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
 	// 	const floor = gltf.scene;
 	// 	floor.traverse((obj) => {
@@ -75,24 +75,33 @@ function init(){
 
 	camera.position.set( 0, 1.6, 0 );	
 
-	// Player
-	// const playerGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
-	// const playerMaterial = new THREE.MeshStandardMaterial( {color: 0x00ff00} );
-	// player = new THREE.Mesh( playerGeometry, playerMaterial );
-	// player.position.set(0,1.6,0);
 
 	// Add floor
-	let ground = new THREE.Mesh(
-		new THREE.PlaneGeometry(50, 50, 10, 10),
-		new THREE.MeshPhongMaterial({ color: 0x00ff00, wireframe: true })
-	);
-
-	ground.rotation.x -= Math.PI / 2; // Rotate the floor 90 degrees
+	const ground = new THREE.Mesh(
+		new THREE.BoxGeometry(100, 1, 100),
+		new THREE.MeshStandardMaterial({ color: 0x000000 }));
+	ground.castShadow = false;
 	ground.receiveShadow = true;
  	scene.add(ground);
 
+	const rbGround = new RigidBody();
+	rbGround.createBox(0, ground.position, ground.quaternion, new THREE.Vector3(100, 1, 100));
+	physicsWorld.addRigidBody(rbGround.body);
+
+	// TestBox
+	const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardMaterial({ color: 0x11ff11 }));
+	box.position.set(0, 10, -20);
+	box.castShadow = true;
+	box.receiveShadow = true;
+ 	scene.add(box);
+
+	const rbBox = new RigidBody();
+	rbBox.createBox(1, box.position, box.quaternion, new THREE.Vector3(4, 4, 4));
+	physicsWorld.addRigidBody(rbBox.body);
 	
+	rigidBodies.push({mesh: box, rigidBody: rbBox});
 	
+
 	// controllers
 	function onSelectStart() {
 		this.userData.isSelecting = true;
@@ -142,11 +151,12 @@ function init(){
     scene.add(dolly);
     dolly.add(camera);
 	camera.add(dummyCam);
-	// dolly.add(player);
     dolly.add(controller1);
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
+
+	animate();
 }
 
 function buildController() {
@@ -186,12 +196,14 @@ function animate() {
 }
 
 function render(){
+	const deltaTime = clock.getDelta();
 	updateOrientation();
 	sendPlayerData();
+	updatePhysics(deltaTime);
 	renderer.render( scene, camera );
 }
 
-
+//Peer.js Code
 peer.on('open', function(id) {
 	peerID = id;
 	console.log('My peer ID is: ' + peerID);
@@ -250,17 +262,46 @@ const sendPlayerData = () => {
 }
 
 const createOtherPlayer = () => {
-	//Create other Player in Scene
+	// Create other Player in Scene
 	const oppGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
 	const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
 	let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
 	scene.add(opponent);
 	otherPlayers.push(opponent);
 
-	//Create other Player's weapon in Scene
+	// Create other Player's weapon in Scene
 	const oppWepGeometry = new THREE.BoxGeometry( 0.2, 0.2, 0.4 );
 	const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
 	let opponentsWeapon = new THREE.Mesh( oppWepGeometry, oppWepMaterial );
 	scene.add(opponentsWeapon);
 	otherPlayersWeapons.push(opponentsWeapon);
+}
+
+
+// Ammo.js Code
+function updatePhysics( deltaTime ) {
+    // Step world
+	physicsWorld.stepSimulation( deltaTime, 10 );
+
+	// Update 
+	for( let body of rigidBodies){
+		let tmpTransform = new Ammo.btTransform();
+		body.rigidBody.motionState.getWorldTransform(tmpTransform);
+		const pos = tmpTransform.getOrigin();
+		const quat = tmpTransform.getRotation();
+		const pos3 = new THREE.Vector3(pos.x(), pos.y(), pos.z());
+      	const quat3 = new THREE.Quaternion(quat.x(), quat.y(), quat.z(), quat.w());
+
+      	body.mesh.position.copy(pos3);
+      	body.mesh.quaternion.copy(quat3);
+	}
+}
+
+function initPhysics(){
+	collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+    dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+    broadphase = new Ammo.btDbvtBroadphase();
+    solver = new Ammo.btSequentialImpulseConstraintSolver();
+    physicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration);
+	physicsWorld.setGravity( new Ammo.btVector3( 0, gravityConstant, 0 ) );
 }
