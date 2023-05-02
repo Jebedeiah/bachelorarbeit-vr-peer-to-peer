@@ -99,7 +99,7 @@ function init(){
  	scene.add(box);
 
 	const rbBox = new RigidBody();
-	rbBox.createBox(1, box.position, box.quaternion, new THREE.Vector3(4, 4, 4));
+	rbBox.createBox(1, box.position, box.quaternion, new THREE.Vector3(3, 3, 3));
 	physicsWorld.addRigidBody(rbBox.body);
 	
 	rigidBodies.push({mesh: box, rigidBody: rbBox});
@@ -247,13 +247,16 @@ const connect = () => {
 		});
 	});
 }
+
 const receiveData = () => {
 	for(let i = 0; i < conns.length; i++){
 		
 		conns[i].on('data', (data) => {	
-			// console.log(data[0], data[1]);
-			otherPlayers[i].position.set(data[0].x, data[0].y, data[0].z);
-			otherPlayersWeapons[i].position.set(data[1].x, data[1].y, data[1].z)
+			console.log(i);
+			otherPlayers[i].position.copy(data[0]);
+			otherPlayers[i].quaternion.set(data[1]._x, data[1]._y, data[1]._z, data[1]._w);
+			otherPlayersWeapons[i].position.copy(data[2]);
+			otherPlayersWeapons[i].quaternion.set(data[3]._x, data[3]._y, data[3]._z, data[3]._w);
 		});
 	}
 }
@@ -274,24 +277,23 @@ peer.on('error', function (err) {
 	// alert('' + err);
 });
 
-//Send something to all current connections
+// Send player data to all current connections
 const sendPlayerData = () => {
 	if(conns.length > 0){
 		let controllerPos = new THREE.Vector3();
 		let cameraPos = new THREE.Vector3();
+		let controllerQuat = new THREE.Quaternion();
+		let cameraQuat = new THREE.Quaternion();
 		controllerGrip2.getWorldPosition(controllerPos);
+		controllerGrip2.getWorldQuaternion(controllerQuat);
 		dummyCam.getWorldPosition(cameraPos);
-		let posQuatData = [cameraPos, controllerPos];
-		// posQuatData.push(new THREE.Vector3(dolly.position));
-		// posQuatData.push(new THREE.Vector3(dolly.quaternion));
-		// posQuatData.push(new THREE.Vector3(controllerGrip2.position));
-		// posQuatData.push(new THREE.Vector3(controllerGrip2.quaternion));
+		dummyCam.getWorldQuaternion(cameraQuat);
+		let posQuatData = [cameraPos, cameraQuat, controllerPos, controllerQuat];
 
 		for(let conn of conns){
 			conn.send(posQuatData);
 		}
-	}
-	
+	}	
 }
 
 const createOtherPlayer = () => {
