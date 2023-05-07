@@ -6,12 +6,20 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 
 //Three variables
 let camera, dummyCam, scene, renderer;
+let wall, wall2, wall3, wall4;
+let obstacle, obstacle2, obstacle3, obstacle4;
+let bulletBB, obstacleBB;
+let bulletBBHelper;
 let dolly;
 let otherPlayers = [];
 let otherPlayersWeapons = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
+let raycaster = new THREE.Raycaster();
+let bullet;
 let gamepad;
+let xRotationQuaternion = new THREE.Quaternion();
+let tank = new THREE.Object3D();
 const clock = new THREE.Clock();
 
 // Physics variables
@@ -41,23 +49,23 @@ window.addEventListener('DOMContentLoaded', async () => {
 // Three.js Code
 function init(){
 
-	initPhysics()
+	initPhysics();
 
 	// GLTF Loader
-	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
-	// 	const floor = gltf.scene;
-	// 	floor.traverse((obj) => {
-	// 		if(obj.isMesh){
-	// 				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})
-	// 			}
-	// 		}
-	// 	)
-	// 	scene.add( gltf.scene );
-	// }, undefined, function ( error ) {
-	// 	console.error( error );
-	// } );
+	loader.load( 'public/models/tank.glb', function ( gltf ) {
+		tank = gltf.scene;
+		tank.traverse((obj) => {
+			if(obj.isMesh){
+					obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
+				}
+			}			
+		)
+		tank.position.set(0, .5, 0);
+	}, undefined, function ( error ) {
+		console.error( error );
+	} );
 
-
+	
 	scene = new THREE.Scene();
 	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
 	renderer = new THREE.WebGLRenderer();
@@ -88,6 +96,32 @@ function init(){
 	rbGround.createBox(0, ground.position, ground.quaternion, new THREE.Vector3(100, 1, 100));
 	physicsWorld.addRigidBody(rbGround.body);
 
+	// Add walls
+	const geometry = new THREE.PlaneGeometry( 100, 10 );
+	const material = new THREE.MeshBasicMaterial( {color: 0x999999, side: THREE.DoubleSide} );
+	wall = new THREE.Mesh( geometry, material );
+	wall2 = wall.clone();
+	wall3 = wall.clone();
+	wall4 = wall.clone();
+	wall.position.set(0, 5, -50);
+	wall2.position.set(-50, 5, 0);
+	wall2.rotateY(Math.PI / 2);
+	wall3.position.set(0, 5, 50);
+	wall4.position.set(50, 5, 0);
+	wall4.rotateY(Math.PI / 2);
+	
+	scene.add( wall, wall2, wall3, wall4 );
+
+	// Add obstacles
+	obstacle = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), new THREE.MeshStandardMaterial({ color: 0x11ff11 }));
+	obstacle.position.set(-30, 5, -20);
+	obstacle.castShadow = true;
+
+	obstacleBB = new THREE.Box3().setFromObject(obstacle);
+
+ 	scene.add(obstacle);
+	scene.add(obstacleBB);
+	
 	// TestBox
 	const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardMaterial({ color: 0x11ff11 }));
 	box.position.set(0, 10, -20);
@@ -156,6 +190,8 @@ function init(){
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
 
+	xRotationQuaternion.setFromAxisAngle(new THREE.Vector3(-1, 0, 0), Math.PI / 4.71);
+
 	animate();
 }
 
@@ -198,8 +234,10 @@ function animate() {
 function render(){
 	const deltaTime = clock.getDelta();
 	updateOrientation();
+	shoot();
+	moveBullet();
 	sendPlayerData();
-	updatePhysics(deltaTime);
+	updatePhysics(deltaTime);	
 	renderer.render( scene, camera );
 }
 
@@ -228,20 +266,49 @@ const receiveData = () => {
 	for(let i = 0; i < conns.length; i++){
 		
 		conns[i].on('data', (data) => {	
-			otherPlayers[i].position.copy(data[0]);
-			otherPlayers[i].quaternion.set(data[1]._x, data[1]._y, data[1]._z, data[1]._w);
-			otherPlayersWeapons[i].position.copy(data[2]);
+			//other players current position and looking direction
+			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
+			otherPlayers[i].rotation.y = data[1];
+
+			//other players weapon direction (based on their controller rotation)
+			otherPlayersWeapons[i].position.set(data[0].x, 1.12, data[0].z);
 			otherPlayersWeapons[i].quaternion.set(data[3]._x, data[3]._y, data[3]._z, data[3]._w);
+			otherPlayersWeapons[i].quaternion.multiply(xRotationQuaternion);
 		});
 	}
 }
 
+const shoot = () => {
+	if ( controller2.userData.isSelecting === true ) {
+		if(!bullet){
+			const geometry = new THREE.SphereGeometry(0.2, 8, 4);
+			const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
+			bullet = new THREE.Mesh( geometry, material );
+			bullet.castShadow = true;
+			bullet.position.copy(controllerGrip2.position);
+			bullet.quaternion.copy(controllerGrip2.quaternion.multiply(xRotationQuaternion));
+
+			bulletBB = new THREE.Box3().setFromObject(bullet);
+			bulletBBHelper = new THREE.Box3Helper(bulletBB);
+
+			scene.add( bullet );
+			scene.add( bulletBB );
+			scene.add( bulletBBHelper );
+		}
+	}
+}
+
+const moveBullet = () => {
+	if(bullet){
+		bullet.translateZ(-0.3);
+		bulletBB.setFromObject(bullet);
+	}
+}
 
 peer.on('error', function (err) {
 	console.log(err);
 	// alert('' + err);
 });
-
 
 // Send player data to all current connections
 const sendPlayerData = () => {
@@ -254,7 +321,11 @@ const sendPlayerData = () => {
 		controllerGrip2.getWorldQuaternion(controllerQuat);
 		dummyCam.getWorldPosition(cameraPos);
 		dummyCam.getWorldQuaternion(cameraQuat);
-		let posQuatData = [cameraPos, cameraQuat, controllerPos, controllerQuat];
+
+		// Get only Y-Rotation from Quaternion
+		const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+		euler.setFromQuaternion(cameraQuat, 'YXZ');
+		let posQuatData = [cameraPos, euler.y, controllerPos, controllerQuat];
 
 		for(let conn of conns){
 			conn.send(posQuatData);
@@ -264,16 +335,14 @@ const sendPlayerData = () => {
 
 const createOtherPlayer = () => {
 	// Create other Player in Scene
-	const oppGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
-	const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
-	let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
+	// const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
+	let opponent = tank.clone();
 	scene.add(opponent);
 	otherPlayers.push(opponent);
 
 	// Create other Player's weapon in Scene
-	const oppWepGeometry = new THREE.BoxGeometry( 0.2, 0.2, 0.4 );
-	const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
-	let opponentsWeapon = new THREE.Mesh( oppWepGeometry, oppWepMaterial );
+	// const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
+	let opponentsWeapon = opponent.children[1];
 	scene.add(opponentsWeapon);
 	otherPlayersWeapons.push(opponentsWeapon);
 }

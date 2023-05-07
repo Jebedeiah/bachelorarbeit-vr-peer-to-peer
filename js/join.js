@@ -12,6 +12,10 @@ let otherPlayersWeapons = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let gamepad;
+let xRotationQuaternion = new THREE.Quaternion();
+let tank = new THREE.Object3D();
+let tankTower = new THREE.Object3D();
+let tankBody = new THREE.Object3D();
 const clock = new THREE.Clock();
 
 // Physics variables
@@ -43,22 +47,27 @@ window.addEventListener('DOMContentLoaded', async () => {
 // Three.js Code
 function init(){	
 
-	// // Ammo.JS
 	initPhysics();
 
 	// GLTF Loader
-	// loader.load( 'public/models/floor_no_mat.glb', function ( gltf ) {
-	// 	const floor = gltf.scene;
-	// 	floor.traverse((obj) => {
-	// 		if(obj.isMesh){
-	// 				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})
-	// 			}
-	// 		}
-	// 	)
-	// 	scene.add( gltf.scene );
-	// }, undefined, function ( error ) {
-	// 	console.error( error );
-	// } );
+	loader.load( 'public/models/tank.glb', function ( gltf ) {
+		tank = gltf.scene;
+		tank.traverse((obj) => {
+			if(obj.isMesh){
+					obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})
+	if(obj.name === "Lower"){
+						tankBody = obj;
+					}
+					else if(obj.name === "Top"){
+						tankTower = obj;
+					}
+				}
+			}
+		)
+		tank.position.set(0, .5, 0);
+	}, undefined, function ( error ) {
+		console.error( error );
+	} );
 
 
 	scene = new THREE.Scene();
@@ -159,6 +168,8 @@ function init(){
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
 
+	xRotationQuaternion.setFromAxisAngle(new THREE.Vector3(-1, 0, 0), Math.PI / 4.71);
+
 	animate();
 }
 
@@ -252,11 +263,14 @@ const receiveData = () => {
 	for(let i = 0; i < conns.length; i++){
 		
 		conns[i].on('data', (data) => {	
-			console.log(i);
-			otherPlayers[i].position.copy(data[0]);
-			otherPlayers[i].quaternion.set(data[1]._x, data[1]._y, data[1]._z, data[1]._w);
-			otherPlayersWeapons[i].position.copy(data[2]);
+			//other players current position and looking direction
+			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
+			otherPlayers[i].rotation.y = data[1];
+
+			//other players weapon direction (based on their controller rotation)
+			otherPlayersWeapons[i].position.set(data[0].x, 1.12, data[0].z);
 			otherPlayersWeapons[i].quaternion.set(data[3]._x, data[3]._y, data[3]._z, data[3]._w);
+			otherPlayersWeapons[i].quaternion.multiply(xRotationQuaternion);
 		});
 	}
 }
@@ -288,7 +302,10 @@ const sendPlayerData = () => {
 		controllerGrip2.getWorldQuaternion(controllerQuat);
 		dummyCam.getWorldPosition(cameraPos);
 		dummyCam.getWorldQuaternion(cameraQuat);
-		let posQuatData = [cameraPos, cameraQuat, controllerPos, controllerQuat];
+		const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+		euler.setFromQuaternion(cameraQuat, 'YXZ');
+		console.log(euler.y);
+		let posQuatData = [cameraPos, euler.y, controllerPos, controllerQuat];
 
 		for(let conn of conns){
 			conn.send(posQuatData);
@@ -298,16 +315,14 @@ const sendPlayerData = () => {
 
 const createOtherPlayer = () => {
 	// Create other Player in Scene
-	const oppGeometry = new THREE.BoxGeometry( 0.5, 1.6, 0.5 );
-	const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
-	let opponent = new THREE.Mesh( oppGeometry, oppMaterial );
+	// const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
+	let opponent = tank.clone();
 	scene.add(opponent);
 	otherPlayers.push(opponent);
 
 	// Create other Player's weapon in Scene
-	const oppWepGeometry = new THREE.BoxGeometry( 0.2, 0.2, 0.4 );
-	const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
-	let opponentsWeapon = new THREE.Mesh( oppWepGeometry, oppWepMaterial );
+	// const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
+	let opponentsWeapon = opponent.children[1];
 	scene.add(opponentsWeapon);
 	otherPlayersWeapons.push(opponentsWeapon);
 }
