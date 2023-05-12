@@ -8,11 +8,12 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
 let obstacle, obstacle2, obstacle3, obstacle4;
-let bulletBB, obstacleBB;
-let bulletBBHelper;
+let bulletBB, obstacleBB, playerBB, playerBBHelper;
+let removeBullet;
 let dolly;
 let player = new THREE.Object3D();
 let playerWeapon;
+let canShoot = true;
 let otherPlayers = [];
 let otherPlayersWeapons = [];
 let otherPlayersBullets = [];
@@ -22,6 +23,7 @@ let raycaster = new THREE.Raycaster();
 let rayEndPoint = new THREE.Vector3();
 let maxRayDistance = 200;
 let objects = [];
+let obstacles = [];
 let collisionBoxes = [];
 let bullet = null;
 let gamepad;
@@ -72,7 +74,6 @@ async function init(){
 	tank.position.set(0, .5, 0);
 	player = tank.clone();
 	playerWeapon = player.children[1];
-	// player.rotation.y = Math.PI;
 
 
 	scene = new THREE.Scene();
@@ -92,6 +93,9 @@ async function init(){
 
 	camera.position.set( 0, 1.6, 0 );
 
+	playerBB = new THREE.Box3().setFromObject(player);
+	playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
+	scene.add( playerBBHelper );
 
 	// Add floor
 	const ground = new THREE.Mesh(
@@ -370,33 +374,51 @@ function updateRaycaster() {
 
 const shoot = () => {
 	if ( controller2.userData.isSelecting === true ) {
-		if(!bullet){
-			const geometry = new THREE.SphereGeometry(0.1, 8, 4);
+		if(!bullet && canShoot){
+			const geometry = new THREE.SphereGeometry(0.04, 8, 4);
 			const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
 			bullet = new THREE.Mesh( geometry, material );
 			bullet.castShadow = true;
-			bullet.position.z += 1
-			bullet.position.y += .1
+			// bullet.position.z += 1
+			// bullet.position.y += .1
+			bullet.position.copy(playerWeapon.position);
+			bullet.position.y += .61;
+			bullet.quaternion.copy(playerWeapon.quaternion);
+			console.log(bullet);
 			bulletBB = new THREE.Box3().setFromObject(bullet);
-			bulletBBHelper = new THREE.Box3Helper(bulletBB);
+			scene.add( bullet );
+			removeBullet = setTimeout(() => {BulletTimeOut();}, 1500);
 
-			playerWeapon.add( bullet );
-			// scene.add( bulletBBHelper );
+			canShoot = false;
+			setTimeout(reload, 1500);
 		}
 	}
 	moveBullet();
 }
 
+function reload(){
+	console.log("here");
+	canShoot = true;
+}
+
 const moveBullet = () => {
 	if(bullet){
-		bullet.translateZ(.5);
+		bullet.translateZ(.3);
 		bulletBB.setFromObject(bullet);
 		for(let box of collisionBoxes){
 			if(bulletBB.intersectsBox(box)){
 				scene.remove(bullet);
 				bullet = null;
+				clearTimeout(removeBullet);
 			}			
 		}
+	}
+}
+
+function BulletTimeOut() {
+	if(bullet){
+		scene.remove(bullet);
+		bullet = null;
 	}
 }
 
@@ -442,8 +464,8 @@ const createOtherPlayer = () => {
 	// Create other Player's weapon in Scene
 	// const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
 	let opponentsWeapon = opponent.children[1];
-	scene.add(opponentsWeapon);
 	otherPlayersWeapons.push(opponentsWeapon);
+	scene.add(opponentsWeapon);
 }
 
 
