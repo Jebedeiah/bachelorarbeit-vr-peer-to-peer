@@ -21,9 +21,9 @@ let tempMatrix = new THREE.Matrix4();
 let raycaster = new THREE.Raycaster();
 let rayEndPoint = new THREE.Vector3();
 let maxRayDistance = 200;
-let ball;
+let interactiveBalls = [];
+let lastBallPositions = [];
 let selectedObject;
-let offset = new THREE.Vector3();
 let objects = [];
 let obstacles = [];
 let collisionBoxes = [];
@@ -158,9 +158,17 @@ async function init(){
 	collisionBoxes.push(obstacleBB);
 	
 	// Ball the player can interact with
-	ball = new THREE.Mesh(new THREE.SphereGeometry(.5, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
+	let ball = new THREE.Mesh(new THREE.SphereGeometry(.5, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
 	ball.position.set(0, 2, -5);
+	ball.isMoving = false;
+	ball.velocity = new THREE.Vector3();
+	ball.distance = 0;
+	interactiveBalls.push(ball);
 	scene.add(ball);
+
+	for(let ball of interactiveBalls){
+		lastBallPositions.push(ball.position.clone());
+	}
 
 	// Raycaster maximum Distanz entspricht Größe der Karte
 	raycaster.far = maxRayDistance;
@@ -289,7 +297,7 @@ function render(){
 	const deltaTime = clock.getDelta();
 	updateOrientation();
 	updateRaycaster();
-	// shoot();
+	moveBall()
 	sendPlayerData();
 	if(mixer) mixer.update(deltaTime);
 	renderer.render( scene, camera );
@@ -376,81 +384,75 @@ function playAnimation(name){
 function updateRaycaster() {
 	
 	setRaycasterFromController(raycaster, controller2);
-	const intersects = raycaster.intersectObject(ball);
-	if(intersects.length > 0){
-		ball.material.color.set(0xff0000);
-		const intersection = intersects[0];
-		const mesh = ball;
-		if(controller2.userData.isSelecting === true){
-			selectedObject = mesh;
-			controller2.attach(mesh);
-		} else if (selectedObject){
-			selectedObject = null;
-			group.attach(mesh);
-			console.log(mesh);
+	for(let i = 0; i < interactiveBalls.length; i++){
+		const intersects = raycaster.intersectObject(interactiveBalls[i]);
+		if(intersects.length > 0){
+			interactiveBalls[i].material.color.set(0xff0000);
+			grabBall(intersects[0], i)
+		}
+		else{
+			interactiveBalls[i].material.color.set(0xffff77);
+		}		
+	}
+}
+
+function grabBall(intersection, index){
+	const ball = intersection.object;
+	
+	if(controller2.userData.isSelecting === true){
+		if(ball.isMoving){
+			ball.isMoving = false;
+		}
+		selectedObject = ball;			
+		controller2.attach(ball);	
+		let vel_dist = calculateBallVelocityAndDistance(ball, index);
+		ball.velocity.copy(vel_dist[0]);
+		ball.distance = vel_dist[1];
+
+	} else if (selectedObject && controller2.userData.isSelecting === false){
+		selectedObject = null;
+		group.attach(ball);
+		if(ball.distance > 0.0001){
+			ball.isMoving = true;
+			ball.velocity.normalize();
+		}
+		
+		
+	}
+}
+
+
+function calculateBallVelocityAndDistance(ball, index){
+	const lastPosition = lastBallPositions[index].clone();
+	const currentPosition = new THREE.Vector3();
+	ball.getWorldPosition(currentPosition);
+	let velocity = currentPosition.clone().sub(lastPosition);
+	let distance = lastPosition.distanceTo(currentPosition);
+	lastBallPositions[index] = currentPosition;
+	return [velocity, distance];
+}
+
+function moveBall(){
+	for(let ball of interactiveBalls){
+		if(ball.isMoving){
+			let direction = ball.velocity.clone();
+			let speed = ball.distance;
+			let newPosition = ball.position.clone().addScaledVector(direction, speed);
+			ball.position.copy(newPosition);
+			ball.distance = ball.distance > 0 ? ball.distance - 0.001 : 0;
+			ball.position.y = ball.position.y > 1 ? ball.position.y - 0.1 : 1;
 		}
 	}
-	else{
-		ball.material.color.set(0xffff77);
-	}
+	
 }
 
 function setRaycasterFromController(raycaster, controller){
 	controller.updateMatrixWorld();
-
 	tempMatrix.identity().extractRotation( controller.matrixWorld );
-
 	raycaster.ray.origin.setFromMatrixPosition( controller.matrixWorld );
 	raycaster.ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );
 }
 
-// const shoot = () => {
-// 	if ( controller2.userData.isSelecting === true ) {
-// 		if(!bullet && canShoot){
-// 			const geometry = new THREE.SphereGeometry(0.04, 8, 4);
-// 			const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
-// 			bullet = new THREE.Mesh( geometry, material );
-// 			bullet.castShadow = true;
-// 			bullet.position.copy(playerWeapon.position);
-// 			bullet.position.y += .61;
-// 			bullet.quaternion.copy(playerWeapon.quaternion);
-// 			console.log(bullet);
-// 			bulletBB = new THREE.Box3().setFromObject(bullet);
-// 			scene.add( bullet );
-// 			removeBullet = setTimeout(() => {BulletTimeOut();}, 1500);
-
-// 			canShoot = false;
-// 			setTimeout(reload, 1500);
-// 		}
-// 	}
-// 	moveBullet();
-// }
-
-// function reload(){
-// 	console.log("here");
-// 	canShoot = true;
-// }
-
-// const moveBullet = () => {
-// 	if(bullet){
-// 		bullet.translateZ(.3);
-// 		bulletBB.setFromObject(bullet);
-// 		for(let box of collisionBoxes){
-// 			if(bulletBB.intersectsBox(box)){
-// 				scene.remove(bullet);
-// 				bullet = null;
-// 				clearTimeout(removeBullet);
-// 			}			
-// 		}
-// 	}
-// }
-
-// function BulletTimeOut() {
-// 	if(bullet){
-// 		scene.remove(bullet);
-// 		bullet = null;
-// 	}
-// }
 
 peer.on('error', function (err) {
 	console.log(err);
