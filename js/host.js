@@ -408,16 +408,17 @@ function grabBall(intersection, index){
 		let vel_dist = calculateBallVelocityAndDistance(ball, index);
 		ball.velocity.copy(vel_dist[0]);
 		ball.distance = vel_dist[1];
+		// console.log(ball.velocity);
+		console.log(ball.velocity.multiplyScalar(0.1));
 
 	} else if (selectedObject && controller2.userData.isSelecting === false){
 		selectedObject = null;
 		group.attach(ball);
 		if(ball.distance > 0.0001){
 			ball.isMoving = true;
-			ball.velocity.normalize();
+			// ball.velocity.normalize();			
+			ball.velocity.multiplyScalar(0.1);
 		}
-		
-		
 	}
 }
 
@@ -433,17 +434,19 @@ function calculateBallVelocityAndDistance(ball, index){
 }
 
 function moveBall(){
+	let bounceFactor = 0.8;
+	let gravity = 0.001;
 	for(let ball of interactiveBalls){
 		if(ball.isMoving){
-			let direction = ball.velocity.clone();
-			let speed = ball.distance;
-			let newPosition = ball.position.clone().addScaledVector(direction, speed);
-			ball.position.copy(newPosition);
-			ball.distance = ball.distance > 0 ? ball.distance - 0.001 : 0;
-			ball.position.y = ball.position.y > 1 ? ball.position.y - 0.1 : 1;
+			ball.position.add(ball.velocity);			
+			ball.velocity.y -= gravity;
+			ball.velocity.multiplyScalar(0.9);
+			if(ball.position.y < 1 ){
+				ball.position.y = 1;
+				ball.velocity.y *= -bounceFactor;
+			}			 
 		}
 	}
-	
 }
 
 function setRaycasterFromController(raycaster, controller){

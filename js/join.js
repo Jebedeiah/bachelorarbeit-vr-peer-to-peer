@@ -12,32 +12,26 @@ let bulletBB, obstacleBB, playerBB, playerBBHelper;
 let removeBullet;
 let dolly;
 let player = new THREE.Object3D();
-let playerWeapon;
 let canShoot = true;
 let otherPlayers = [];
-let otherPlayersWeapons = [];
 let otherPlayersBullets = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
+let tempMatrix = new THREE.Matrix4();
 let raycaster = new THREE.Raycaster();
 let rayEndPoint = new THREE.Vector3();
 let maxRayDistance = 200;
+let interactiveBalls = [];
+let lastBallPositions = [];
+let selectedObject;
 let objects = [];
 let obstacles = [];
 let collisionBoxes = [];
-let bullet = null;
 let gamepad;
-let tank = new THREE.Object3D();
+let robot = new THREE.Object3D();
 const clock = new THREE.Clock();
-
-// Physics variables
-const gravityConstant = - 9.81;
-let collisionConfiguration;
-let dispatcher;
-let broadphase;
-let solver;
-let physicsWorld;
-let rigidBodies = [];
+let mixer, clips, clip, grabClip, throwClip, activeAction, prevAction, grabAction, throwAction;
+let group = new THREE.Group();
 
 //Peer variables
 let remotePeers = [];
@@ -49,31 +43,43 @@ let firstMessage = true;
 
 const loader = new GLTFLoader();
 
-window.addEventListener('DOMContentLoaded', async () => {
-	Ammo().then((lib) => {
-		Ammo = lib;
-		init();		
-	});
+window.addEventListener('DOMContentLoaded', () => {
+	init();		
 });
 
 // Three.js Code
 async function init(){
-
-	initPhysics();
-
 	// GLTF Loader
-	const loadedData = await loader.loadAsync( 'public/models/tank.glb');
+	const loadedData = await loader.loadAsync( 'public/models/robot_animations.glb');
+	robot = loadedData.scene;	
+	mixer = new THREE.AnimationMixer(robot);
+	clips = loadedData.animations;
+	clip = THREE.AnimationClip.findByName(clips, "idle");
+	activeAction = mixer.clipAction(clip);
+	robot.position.set(0, 0.5, 0);
+	robot.rotation.y += Math.PI;
+	player = robot.clone();
+	activeAction.play();
 
-	tank = loadedData.scene;
-	tank.traverse((obj) => {
-		if(obj.isMesh){
-				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
-			}
-		}			
-	)
-	tank.position.set(0, .5, 0);
-	player = tank.clone();
-	playerWeapon = player.children[1];
+	grabClip = THREE.AnimationClip.findByName(clips, "take");
+	grabAction = mixer.clipAction(grabClip);
+	grabAction.setLoop(THREE.LoopOnce);
+	grabAction.setEffectiveTimeScale(1.5);
+
+	throwClip = THREE.AnimationClip.findByName(clips, "throw");
+	throwAction = mixer.clipAction(throwClip);
+	throwAction.setLoop(THREE.LoopOnce);
+	throwAction.setEffectiveTimeScale(1.3);
+
+	// tank.traverse((obj) => {
+	// 	if(obj.isMesh){
+	// 			obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
+	// 		}
+	// 	}			
+	// )
+	// tank.position.set(0, .5, 0);
+	// player = tank.clone();	
+	// playerWeapon = player.children[1];
 
 
 	scene = new THREE.Scene();
@@ -84,6 +90,7 @@ async function init(){
 	document.body.appendChild( renderer.domElement );
 	document.body.appendChild( VRButton.createButton( renderer ) );
 	renderer.xr.enabled = true;
+	scene.add(group);
 
 	const environment = new RoomEnvironment();
 	const pmremGenerator = new THREE.PMREMGenerator( renderer );
@@ -93,9 +100,10 @@ async function init(){
 
 	camera.position.set( 0, 1.6, 0 );
 
+	// scene.add(robot);
 	playerBB = new THREE.Box3().setFromObject(player);
-	playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
-	scene.add( playerBBHelper );
+	// playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
+	// scene.add( playerBBHelper );
 
 	// Add floor
 	const ground = new THREE.Mesh(
@@ -108,10 +116,6 @@ async function init(){
 
 	objects.push(ground);
  	scene.add(ground);
-
-	const rbGround = new RigidBody();
-	rbGround.createBox(0, ground.position, ground.quaternion, new THREE.Vector3(100, 1, 100));
-	physicsWorld.addRigidBody(rbGround.body);
 
 	// Add walls
 	const geometry = new THREE.BoxGeometry( 100, 10, 2 );
@@ -142,24 +146,31 @@ async function init(){
 	obstacle.position.set(-30, 5, -20);
 	obstacle.castShadow = true;
 	objects.push(obstacle);
+	scene.add(obstacle);
+
+	// 	scene.add(obs);
+	// for(let i = 0; i < 10; i++){
+	// 	const obs = obstacle.copy();
+	// 	objects.push(obs);
+	// 	scene.add(obs);
+	// }
+
 	
 	obstacleBB = new THREE.Box3().setFromObject(obstacle);
 	collisionBoxes.push(obstacleBB);
 
- 	scene.add(obstacle);
+	// Ball the player can interact with
+	let ball = new THREE.Mesh(new THREE.SphereGeometry(.5, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
+	ball.position.set(0, 2, -5);
+	ball.isMoving = false;
+	ball.velocity = new THREE.Vector3();
+	ball.distance = 0;
+	interactiveBalls.push(ball);
+	scene.add(ball);
 	
-	// TestBox
-	const box = new THREE.Mesh(new THREE.BoxGeometry(3, 3, 3), new THREE.MeshStandardMaterial({ color: 0x11ff11 }));
-	box.position.set(0, 10, -20);
-	box.castShadow = true;
-	box.receiveShadow = true;
- 	scene.add(box);
-
-	const rbBox = new RigidBody();
-	rbBox.createBox(1, box.position, box.quaternion, new THREE.Vector3(3, 3, 3));
-	physicsWorld.addRigidBody(rbBox.body);
-	
-	rigidBodies.push({mesh: box, rigidBody: rbBox});
+	for(let ball of interactiveBalls){
+		lastBallPositions.push(ball.position.clone());
+	}
 
 	// Raycaster maximum Distanz entspricht Größe der Karte
 	raycaster.far = maxRayDistance;
@@ -167,10 +178,17 @@ async function init(){
 	// controllers
 	function onSelectStart() {
 		this.userData.isSelecting = true;
+		grabAction.play();
+		// grabAction.fadeOut(1);
+		grabAction.reset();
 	}
 
 	function onSelectEnd() {
 		this.userData.isSelecting = false;
+		grabAction.stop();
+		throwAction.play();
+		// throwAction.fadeOut(1);
+		throwAction.reset();
 	}
 
 	controller1 = renderer.xr.getController(0);
@@ -188,7 +206,7 @@ async function init(){
 	controller2.addEventListener( 'selectstart', onSelectStart );
 	controller2.addEventListener( 'selectend', onSelectEnd );
 	controller2.addEventListener( 'connected', function ( event ) {
-		// this.add( raycaster );
+		this.add( buildRaycasterLine() );
 	});
 
 	controller2.addEventListener( 'disconnected', function () {
@@ -217,7 +235,7 @@ async function init(){
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
-	dolly.add(player);
+	dolly.add(robot);
 
 	animate();
 }
@@ -235,6 +253,14 @@ function buildController() {
 	return new THREE.Line( geometry, material );
 }
 
+function buildRaycasterLine(){
+	// Raycaster
+	const rayMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+	const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+
+	return new THREE.Line(rayGeometry, rayMaterial);
+}
+
 function updateOrientation() {
 	// Get joystick input		
 	if(gamepad){
@@ -244,11 +270,22 @@ function updateOrientation() {
 		let x = input[2];
 		let z = input[3];
 	
+		if(z < -0.5 ){
+			playAnimation("running");
+		}else if(z > 0.5){
+			playAnimation("run_backwards");
+		}else if(x < -0.5){
+			playAnimation("strafe_left");
+		}else if(x > 0.5){
+			playAnimation("strafe_right");
+		}else{
+			playAnimation("idle");
+		}
 		// Use joystick input to move camera
 		const quaternion = dolly.quaternion.clone();
 		dummyCam.getWorldQuaternion(dolly.quaternion);
 		dolly.translateX(x * 0.05);
-		dolly.translateZ(z * 0.05);
+		dolly.translateZ(z* 0.05);
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -261,10 +298,10 @@ function animate() {
 function render(){
 	const deltaTime = clock.getDelta();
 	updateOrientation();
-	updateRaycaster()
-	shoot();
+	updateRaycaster();
+	moveBall()
 	sendPlayerData();
-	updatePhysics(deltaTime);
+	if(mixer) mixer.update(deltaTime);
 	renderer.render( scene, camera );
 }
 
@@ -320,107 +357,127 @@ const receiveData = () => {
 			// otherPlayers[i].rotation.y += Math.PI;
 
 			// other players weapon direction (based on their controller rotation)
-			otherPlayersWeapons[i].position.set(data[0].x, 1.12, data[0].z);
+			// otherPlayersWeapons[i].position.set(data[0].x, 1.12, data[0].z);
 			// otherPlayersWeapons[i].quaternion.set(data[3]._x, data[3]._y, data[3]._z, data[3]._w);
-			otherPlayersWeapons[i].rotation.y = data[1];
-			otherPlayersWeapons[i].lookAt(new THREE.Vector3(data[3].x, data[3].y, data[3].z));
+			// otherPlayersWeapons[i].lookAt(new THREE.Vector3(data[3].x, data[3].y, data[3].z));
 			// otherPlayersWeapons[i].rotation.y += Math.PI;
 
 			// bullets shot from other players
-			if (data[4] === null) {
-				if (otherPlayersBullets[i]) {
-				  	scene.remove(otherPlayersBullets[i]);
-				  	otherPlayersBullets[i] = null;
-				}
-			} else {
-				if (!otherPlayersBullets[i]) {
-					const geometry = new THREE.SphereGeometry(0.1, 8, 4);
-					const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
-					let otherBullet = new THREE.Mesh( geometry, material );
-					otherBullet.position.set(data[4].x, data[4].y, data[4].z);
-					otherPlayersBullets[i] = otherBullet;
-					scene.add(otherPlayersBullets[i]);
-				} else {
-				  	otherPlayersBullets[i].position.set(data[4].x, data[4].y, data[4].z);
-				}
-			}
+			// if (data[4] === null) {
+			// 	if (otherPlayersBullets[i]) {
+			// 		scene.remove(otherPlayersBullets[i]);
+			// 		otherPlayersBullets[i] = null;
+			// 	}
+			// } else {
+			// 	if (!otherPlayersBullets[i]) {
+			// 		const geometry = new THREE.SphereGeometry(0.1, 8, 4);
+			// 		const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
+			// 		let otherBullet = new THREE.Mesh( geometry, material );
+			// 		otherBullet.position.set(data[4].x, data[4].y, data[4].z);
+			// 		otherPlayersBullets[i] = otherBullet;
+			// 		scene.add(otherPlayersBullets[i]);
+			// 	} else {
+			// 	  	otherPlayersBullets[i].position.set(data[4].x, data[4].y, data[4].z);
+			// 	}
+			// }			
 		});
+	}	
+}	
+
+
+function playAnimation(name){
+	prevAction = activeAction;
+	clip = THREE.AnimationClip.findByName(clips, name);
+	activeAction = mixer.clipAction(clip);
+	if(grabAction.isRunning() || throwAction.isRunning()){
+		activeAction.setEffectiveWeight(0.7);
+	} else{
+		activeAction.setEffectiveWeight(1);
+			}
+	
+	if ( prevAction !== activeAction ) {
+		prevAction.fadeOut( 0.5 );
+		activeAction.reset();
+		activeAction.fadeIn( 0.5 );
 	}
+	activeAction.play();
 }
+
 
 // Get raycaster rayEndPoint
 function updateRaycaster() {
 	
-	for(let obj of objects){
-		let pos = new THREE.Vector3();
-		let dir = new THREE.Vector3();
-		controller2.getWorldPosition(pos);
-		controller2.getWorldDirection(dir)
-		dir.multiplyScalar(-1);
-		raycaster.set(pos, dir);
-
-		const intersects = raycaster.intersectObject(obj);
+	setRaycasterFromController(raycaster, controller2);
+	for(let i = 0; i < interactiveBalls.length; i++){
+		const intersects = raycaster.intersectObject(interactiveBalls[i]);
 		if(intersects.length > 0){
-			rayEndPoint = intersects[0].point;
+			interactiveBalls[i].material.color.set(0xff0000);
+			grabBall(intersects[0], i)
 		}
 		else{
-			rayEndPoint.addVectors(pos, dir.multiplyScalar(maxRayDistance) );
-		}	
-		if(playerWeapon){
-			playerWeapon.lookAt(rayEndPoint);
+			interactiveBalls[i].material.color.set(0xffff77);
 		}
 	}
 }
 
-const shoot = () => {
-	if ( controller2.userData.isSelecting === true ) {
-		if(!bullet && canShoot){
-			const geometry = new THREE.SphereGeometry(0.04, 8, 4);
-			const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
-			bullet = new THREE.Mesh( geometry, material );
-			bullet.castShadow = true;
-			// bullet.position.z += 1
-			// bullet.position.y += .1
-			bullet.position.copy(playerWeapon.position);
-			bullet.position.y += .61;
-			bullet.quaternion.copy(playerWeapon.quaternion);
-			console.log(bullet);
-			bulletBB = new THREE.Box3().setFromObject(bullet);
-			scene.add( bullet );
-			removeBullet = setTimeout(() => {BulletTimeOut();}, 1500);
-
-			canShoot = false;
-			setTimeout(reload, 1500);
+function grabBall(intersection, index){
+	const ball = intersection.object;
+	
+	if(controller2.userData.isSelecting === true){
+		if(ball.isMoving){
+			ball.isMoving = false;
 		}
-	}
-	moveBullet();
-}
+		selectedObject = ball;			
+		controller2.attach(ball);	
+		let vel_dist = calculateBallVelocityAndDistance(ball, index);
+		ball.velocity.copy(vel_dist[0]);
+		ball.distance = vel_dist[1];
 
-function reload(){
-	console.log("here");
-	canShoot = true;
-}
-
-const moveBullet = () => {
-	if(bullet){
-		bullet.translateZ(.3);
-		bulletBB.setFromObject(bullet);
-		for(let box of collisionBoxes){
-			if(bulletBB.intersectsBox(box)){
-				scene.remove(bullet);
-				bullet = null;
-				clearTimeout(removeBullet);
-			}			
+	} else if (selectedObject && controller2.userData.isSelecting === false){
+		selectedObject = null;
+		group.attach(ball);
+		if(ball.distance > 0.0001){
+			ball.isMoving = true;
+			// ball.velocity.normalize();
+			ball.velocity.multiplyScalar(0.01);
 		}
 	}
 }
 
-function BulletTimeOut() {
-	if(bullet){
-		scene.remove(bullet);
-		bullet = null;
+
+function calculateBallVelocityAndDistance(ball, index){
+	const lastPosition = lastBallPositions[index].clone();
+	const currentPosition = new THREE.Vector3();
+	ball.getWorldPosition(currentPosition);
+	let velocity = currentPosition.clone().sub(lastPosition);
+	let distance = lastPosition.distanceTo(currentPosition);
+	lastBallPositions[index] = currentPosition;
+	return [velocity, distance];
+}
+
+function moveBall(){
+	let bounceFactor = 0.8;
+	let gravity = 0.001;
+	for(let ball of interactiveBalls){
+		if(ball.isMoving){
+			ball.position.add(ball.velocity);			
+			ball.velocity.y -= gravity;
+			ball.velocity.multiplyScalar(0.9);
+			if(ball.position.y < 1 ){
+				ball.position.y = 1;
+				ball.velocity.y *= -bounceFactor;
+			}
+		}
 	}
 }
+
+function setRaycasterFromController(raycaster, controller){
+	controller.updateMatrixWorld();
+	tempMatrix.identity().extractRotation( controller.matrixWorld );
+	raycaster.ray.origin.setFromMatrixPosition( controller.matrixWorld );
+	raycaster.ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );
+}
+
 
 peer.on('error', function (err) {
 	console.log(err);
@@ -466,33 +523,4 @@ const createOtherPlayer = () => {
 	let opponentsWeapon = opponent.children[1];
 	otherPlayersWeapons.push(opponentsWeapon);
 	scene.add(opponentsWeapon);
-}
-
-
-// Ammo.js Code
-function updatePhysics( deltaTime ) {
-    // Step world
-	physicsWorld.stepSimulation( deltaTime, 10 );
-
-	// Update 
-	for( let body of rigidBodies){
-		let tmpTransform = new Ammo.btTransform();
-		body.rigidBody.motionState.getWorldTransform(tmpTransform);
-		const pos = tmpTransform.getOrigin();
-		const quat = tmpTransform.getRotation();
-		const pos3 = new THREE.Vector3(pos.x(), pos.y(), pos.z());
-      	const quat3 = new THREE.Quaternion(quat.x(), quat.y(), quat.z(), quat.w());
-
-      	body.mesh.position.copy(pos3);
-      	body.mesh.quaternion.copy(quat3);
-	}
-}
-
-function initPhysics(){
-	collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-    dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
-    broadphase = new Ammo.btDbvtBroadphase();
-    solver = new Ammo.btSequentialImpulseConstraintSolver();
-    physicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration);
-	physicsWorld.setGravity( new Ammo.btVector3( 0, gravityConstant, 0 ) );
 }
