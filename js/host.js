@@ -12,16 +12,16 @@ let bulletBB, obstacleBB, playerBB, playerBBHelper;
 let removeBullet;
 let dolly;
 let player = new THREE.Object3D();
-let canShoot = true;
 let otherPlayers = [];
-let otherPlayersBullets = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let tempMatrix = new THREE.Matrix4();
 let raycaster = new THREE.Raycaster();
 let rayEndPoint = new THREE.Vector3();
-let maxRayDistance = 200;
+let maxRayDistance = 1.5;
+const radius = 0.3;
 let interactiveBalls = [];
+let interactiveBallBBs = [];
 let lastBallPositions = [];
 let selectedObject;
 let objects = [];
@@ -109,14 +109,12 @@ async function init(){
 		new THREE.MeshStandardMaterial({ color: 0x222222 }));
 	ground.castShadow = false;
 	ground.receiveShadow = true;
-	const groundBB = new THREE.Box3().setFromObject(ground);
-	collisionBoxes.push(groundBB);
 
 	objects.push(ground);
  	scene.add(ground);	
 
 	// Add walls
-	const geometry = new THREE.BoxGeometry( 100, 10, 2 );
+	const geometry = new THREE.BoxGeometry( 100, 100, 2 );
 	const material = new THREE.MeshBasicMaterial( {color: 0x999999, side: THREE.DoubleSide} );
 	wall = new THREE.Mesh( geometry, material );
 	wall2 = wall.clone();
@@ -158,13 +156,15 @@ async function init(){
 	collisionBoxes.push(obstacleBB);
 	
 	// Ball the player can interact with
-	let ball = new THREE.Mesh(new THREE.SphereGeometry(.5, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
+	let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
 	ball.position.set(0, 2, -5);
 	ball.isMoving = false;
 	ball.velocity = new THREE.Vector3();
 	ball.distance = 0;
 	interactiveBalls.push(ball);
 	scene.add(ball);
+	let ballBB = new THREE.Box3().setFromObject(ball);
+	interactiveBallBBs.push(ballBB);
 
 	for(let ball of interactiveBalls){
 		lastBallPositions.push(ball.position.clone());
@@ -233,7 +233,7 @@ async function init(){
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
-	dolly.add(robot);
+	// dolly.add(robot);
 
 	animate();
 }
@@ -282,8 +282,8 @@ function updateOrientation() {
 		// Use joystick input to move camera
 		const quaternion = dolly.quaternion.clone();
 		dummyCam.getWorldQuaternion(dolly.quaternion);
-		dolly.translateX(x * 0.05);
-		dolly.translateZ(z* 0.05);
+		dolly.translateX(x * 0.8);
+		dolly.translateZ(z* 0.8);
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -297,7 +297,7 @@ function render(){
 	const deltaTime = clock.getDelta();
 	updateOrientation();
 	updateRaycaster();
-	moveBall()
+	moveBall();
 	sendPlayerData();
 	if(mixer) mixer.update(deltaTime);
 	renderer.render( scene, camera );
@@ -388,36 +388,35 @@ function updateRaycaster() {
 		const intersects = raycaster.intersectObject(interactiveBalls[i]);
 		if(intersects.length > 0){
 			interactiveBalls[i].material.color.set(0xff0000);
-			grabBall(intersects[0], i)
+			grabBall(intersects[0].object, i)
 		}
 		else{
 			interactiveBalls[i].material.color.set(0xffff77);
+			if(interactiveBalls[i].parent !== group){
+				group.attach(interactiveBalls[i]);
+				interactiveBalls[i].velocity.set(0,0,0);
+				interactiveBalls[i].isMoving = true;
+			} 
 		}		
 	}
 }
 
-function grabBall(intersection, index){
-	const ball = intersection.object;
-	
+function grabBall(ball, index){
 	if(controller2.userData.isSelecting === true){
 		if(ball.isMoving){
 			ball.isMoving = false;
 		}
-		selectedObject = ball;			
-		controller2.attach(ball);	
+		controller2.attach(ball);
+		selectedObject = ball;
 		let vel_dist = calculateBallVelocityAndDistance(ball, index);
 		ball.velocity.copy(vel_dist[0]);
 		ball.distance = vel_dist[1];
-		// console.log(ball.velocity);
-		console.log(ball.velocity.multiplyScalar(0.1));
 
 	} else if (selectedObject && controller2.userData.isSelecting === false){
 		selectedObject = null;
 		group.attach(ball);
-		if(ball.distance > 0.0001){
+		if(ball.distance > 0.0001 || ball.position.y > 1){
 			ball.isMoving = true;
-			// ball.velocity.normalize();			
-			ball.velocity.multiplyScalar(0.1);
 		}
 	}
 }
@@ -435,17 +434,35 @@ function calculateBallVelocityAndDistance(ball, index){
 
 function moveBall(){
 	let bounceFactor = 0.8;
-	let gravity = 0.001;
-	for(let ball of interactiveBalls){
+	let gravity = 0.003;
+	for(let i = 0; i < interactiveBalls.length; i++){
+		let ball = interactiveBalls[i];
+		let lastPosition = ball.position.clone();
 		if(ball.isMoving){
 			ball.position.add(ball.velocity);			
 			ball.velocity.y -= gravity;
-			ball.velocity.multiplyScalar(0.9);
-			if(ball.position.y < 1 ){
-				ball.position.y = 1;
+			ball.velocity.multiplyScalar(0.995);
+			ball.distance = lastPosition.distanceTo(ball.position);			
+			if(ball.position.y < 0.8 ){
+				ball.position.y = 0.8;
 				ball.velocity.y *= -bounceFactor;
-			}			 
+				if(ball.velocity.y < 0.02) ball.velocity.y = 0;
+			}
+			if(ball.distance < 0.025 && ball.position.y === 0.8){
+				ball.isMoving = false;
+			}
+			interactiveBallBBs[i].setFromObject(ball);
+			ball_walltouch(i);
 		}
+	}
+}
+
+function ball_walltouch(index){	
+	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[0]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[2])){
+		ball.velocity.z *= -0.9;
+	}
+	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[1]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[3])){
+		ball.velocity.x *= -0.9;
 	}
 }
 
