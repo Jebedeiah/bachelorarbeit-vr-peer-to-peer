@@ -3,21 +3,21 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 //Three variables
 let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
 let obstacle, obstacle2, obstacle3, obstacle4;
-let bulletBB, obstacleBB, playerBB, playerBBHelper;
-let removeBullet;
+let obstacleBB, playerBB, playerBBHelper;
 let dolly;
 let player = new THREE.Object3D();
+let opponent = new THREE.Object3D();
 let otherPlayers = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let tempMatrix = new THREE.Matrix4();
 let raycaster = new THREE.Raycaster();
-let rayEndPoint = new THREE.Vector3();
 let maxRayDistance = 1.5;
 const radius = 0.3;
 let interactiveBalls = [];
@@ -30,6 +30,7 @@ let collisionBoxes = [];
 let gamepad;
 let robot = new THREE.Object3D();
 const clock = new THREE.Clock();
+let mixers = [];
 let mixer, clips, clip, grabClip, throwClip, activeAction, prevAction, grabAction, throwAction;
 let group = new THREE.Group();
 
@@ -49,14 +50,21 @@ window.addEventListener('DOMContentLoaded', () => {
 async function init(){
 	// GLTF Loader
 	const loadedData = await loader.loadAsync( 'public/models/robot_animations.glb');
-	robot = loadedData.scene;	
-	mixer = new THREE.AnimationMixer(robot);
+	robot = loadedData.scene;
+	robot.traverse((obj) => {
+		if(obj.isMesh){
+				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
+			}
+		}			
+	)
+	robot.position.set(0, 0.5, 0);
+	robot.rotation.y += Math.PI;
+	player = SkeletonUtils.clone(robot);
+
+	mixer = new THREE.AnimationMixer(player);
 	clips = loadedData.animations;
 	clip = THREE.AnimationClip.findByName(clips, "idle");
 	activeAction = mixer.clipAction(clip);
-	robot.position.set(0, 0.5, 0);
-	robot.rotation.y += Math.PI;
-	player = robot.clone();
 	activeAction.play();
 
 	grabClip = THREE.AnimationClip.findByName(clips, "take");
@@ -69,17 +77,6 @@ async function init(){
 	throwAction.setLoop(THREE.LoopOnce);
 	throwAction.setEffectiveTimeScale(1.3);
 	
-	// tank.traverse((obj) => {
-	// 	if(obj.isMesh){
-	// 			obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
-	// 		}
-	// 	}			
-	// )
-	// tank.position.set(0, .5, 0);
-	// player = tank.clone();	
-	// playerWeapon = player.children[1];
-
-	
 	scene = new THREE.Scene();
 	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
 	renderer = new THREE.WebGLRenderer();
@@ -89,6 +86,8 @@ async function init(){
 	document.body.appendChild( VRButton.createButton( renderer ) );
 	renderer.xr.enabled = true;
 	scene.add(group);
+	
+	scene.add(player);
 
 	const environment = new RoomEnvironment();
 	const pmremGenerator = new THREE.PMREMGenerator( renderer );
@@ -98,10 +97,9 @@ async function init(){
 
 	camera.position.set( 0, 1.6, 0 );
 
-	// scene.add(robot);
 	playerBB = new THREE.Box3().setFromObject(player);
-	// playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
-	// scene.add( playerBBHelper );
+	playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
+	scene.add( playerBBHelper );
 
 	// Add floor
 	const ground = new THREE.Mesh(
@@ -282,8 +280,8 @@ function updateOrientation() {
 		// Use joystick input to move camera
 		const quaternion = dolly.quaternion.clone();
 		dummyCam.getWorldQuaternion(dolly.quaternion);
-		dolly.translateX(x * 0.8);
-		dolly.translateZ(z* 0.8);
+		dolly.translateX(x * 0.08);
+		dolly.translateZ(z* 0.08);
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -309,6 +307,10 @@ peer.on('open', function(id) {
 	console.log('My peer ID is: ' + peerID);
 });
 
+peer.on('error', function (err) {
+	console.log(err);
+	// alert('' + err);
+});
 
 peer.on('connection', (conn) => {
 	conn.on('open', () => {
@@ -330,35 +332,30 @@ const receiveData = () => {
 		conns[i].on('data', (data) => {	
 			// other players current position and looking direction
 			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
-			otherPlayers[i].rotation.y = data[1];			
+			otherPlayers[i].rotation.y = data[1] * -1;			
 			// otherPlayers[i].rotation.y += Math.PI;
-
-			// other players weapon direction (based on their controller rotation)
-			// otherPlayersWeapons[i].position.set(data[0].x, 1.12, data[0].z);
-			// otherPlayersWeapons[i].quaternion.set(data[3]._x, data[3]._y, data[3]._z, data[3]._w);
-			// otherPlayersWeapons[i].lookAt(new THREE.Vector3(data[3].x, data[3].y, data[3].z));
-			// otherPlayersWeapons[i].rotation.y += Math.PI;
-
-			// bullets shot from other players
-			// if (data[4] === null) {
-			// 	if (otherPlayersBullets[i]) {
-			// 		scene.remove(otherPlayersBullets[i]);
-			// 		otherPlayersBullets[i] = null;
-			// 	}
-			// } else {
-			// 	if (!otherPlayersBullets[i]) {
-			// 		const geometry = new THREE.SphereGeometry(0.1, 8, 4);
-			// 		const material = new THREE.MeshStandardMaterial( { color: 0xffff00 } ); 
-			// 		let otherBullet = new THREE.Mesh( geometry, material );
-			// 		otherBullet.position.set(data[4].x, data[4].y, data[4].z);
-			// 		otherPlayersBullets[i] = otherBullet;
-			// 		scene.add(otherPlayersBullets[i]);
-			// 	} else {
-			// 	  	otherPlayersBullets[i].position.set(data[4].x, data[4].y, data[4].z);
-			// 	}
-			// }			
 		});
 	}
+}
+
+// Send player data to all current connections
+const sendPlayerData = () => {
+	let cameraPos = new THREE.Vector3();
+	let cameraQuat = new THREE.Quaternion();
+	// let controllerPos = new THREE.Vector3();
+	// let controllerQuat = new THREE.Quaternion();
+	// controller2.getWorldPosition(controllerPos);
+	// controller2.getWorldQuaternion(controllerQuat);
+	dummyCam.getWorldPosition(cameraPos);
+	dummyCam.getWorldQuaternion(cameraQuat);
+	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+	euler.setFromQuaternion(cameraQuat, 'YXZ');
+	let playerData = [cameraPos, euler.y];
+
+	for(let conn of conns){
+		conn.send(playerData);
+	}
+		
 }
 
 function playAnimation(name){
@@ -421,7 +418,6 @@ function grabBall(ball, index){
 	}
 }
 
-
 function calculateBallVelocityAndDistance(ball, index){
 	const lastPosition = lastBallPositions[index].clone();
 	const currentPosition = new THREE.Vector3();
@@ -473,49 +469,10 @@ function setRaycasterFromController(raycaster, controller){
 	raycaster.ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );
 }
 
-
-peer.on('error', function (err) {
-	console.log(err);
-	// alert('' + err);
-});
-
-// Send player data to all current connections
-const sendPlayerData = () => {
-	if(conns.length > 0){
-		let controllerPos = new THREE.Vector3();
-		let cameraPos = new THREE.Vector3();
-		// let controllerQuat = new THREE.Quaternion();
-		let cameraQuat = new THREE.Quaternion();
-		let bulletPos = new THREE.Vector3();
-		controller2.getWorldPosition(controllerPos);
-		// controller2.getWorldQuaternion(controllerQuat);
-		dummyCam.getWorldPosition(cameraPos);
-		dummyCam.getWorldQuaternion(cameraQuat);
-		if(bullet){
-			bullet.getWorldPosition(bulletPos);
-		} else{ bulletPos = null;}
-
-		// Get only Y-Rotation from Quaternion
-		const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-		euler.setFromQuaternion(cameraQuat, 'YXZ');
-		let playerData = [cameraPos, euler.y, controllerPos, rayEndPoint, bulletPos];
-
-		for(let conn of conns){
-			conn.send(playerData);
-		}
-	}	
-}
-
 const createOtherPlayer = () => {
 	// Create other Player in Scene
 	// const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
-	let opponent = tank.clone();
+	let opponent = SkeletonUtils.clone(robot);
 	scene.add(opponent);
-	otherPlayers.push(opponent);
-
-	// Create other Player's weapon in Scene
-	// const oppWepMaterial = new THREE.MeshStandardMaterial( {color: 0x00ffff} );
-	let opponentsWeapon = opponent.children[1];	
-	otherPlayersWeapons.push(opponentsWeapon);
-	scene.add(opponentsWeapon);
+	otherPlayers.push(opponent);	
 }
