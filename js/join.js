@@ -8,6 +8,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 //Three variables
 let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
+let boundary = 28;
 let obstacle, obstacle2, obstacle3, obstacle4;
 let obstacleBB, playerBB, playerBBHelper;
 let dolly;
@@ -33,6 +34,8 @@ let mixers = [];
 let activeActions = []
 let prevActions = [];
 let mixer, clips, clip, grabClip, throwClip, activeAction, prevAction, grabAction, throwAction;
+let throwing = false;
+let taking = false;
 let group = new THREE.Group();
 
 //Peer variables
@@ -106,7 +109,7 @@ async function init(){
 
 	// Add floor
 	const ground = new THREE.Mesh(
-		new THREE.BoxGeometry(100, 1, 100),
+		new THREE.BoxGeometry(60, 1, 100),
 		new THREE.MeshStandardMaterial({ color: 0x222222 }));
 	ground.castShadow = false;
 	ground.receiveShadow = true;
@@ -115,23 +118,23 @@ async function init(){
  	scene.add(ground);
 
 	// Add walls
-	const geometry = new THREE.BoxGeometry( 100, 100, 2 );
+	const geometry = new THREE.BoxGeometry( 60, 60, 2 );
 	const material = new THREE.MeshBasicMaterial( {color: 0x999999, side: THREE.DoubleSide} );
 	wall = new THREE.Mesh( geometry, material );
 	wall2 = wall.clone();
 	wall3 = wall.clone();
 	wall4 = wall.clone();
-	wall.position.set(0, 5, -50);
+	wall.position.set(0, 5, -30);
 	const wallBB = new THREE.Box3().setFromObject(wall);
 	collisionBoxes.push(wallBB);
-	wall2.position.set(-50, 5, 0);
+	wall2.position.set(-30, 5, 0);
 	wall2.rotateY(Math.PI / 2);
 	const wall2BB = new THREE.Box3().setFromObject(wall2);
 	collisionBoxes.push(wall2BB);
-	wall3.position.set(0, 5, 50);
+	wall3.position.set(0, 5, 30);
 	const wall3BB = new THREE.Box3().setFromObject(wall3);
 	collisionBoxes.push(wall3BB);
-	wall4.position.set(50, 5, 0);
+	wall4.position.set(30, 5, 0);
 	wall4.rotateY(Math.PI / 2);
 	const wall4BB = new THREE.Box3().setFromObject(wall4);
 	collisionBoxes.push(wall4BB);
@@ -157,15 +160,20 @@ async function init(){
 	collisionBoxes.push(obstacleBB);
 
 	// Ball the player can interact with
-	let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
-	ball.position.set(0, 2, -5);
-	ball.isMoving = false;
-	ball.velocity = new THREE.Vector3();
-	ball.distance = 0;
-	interactiveBalls.push(ball);
-	scene.add(ball);
-	let ballBB = new THREE.Box3().setFromObject(ball);
-	interactiveBallBBs.push(ballBB);
+	for(let i = 0; i < 10; i++){
+		let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
+		ball.position.x = (i * 5 - 25);
+		ball.position.z = 0;
+		ball.position.y = 0.8; 
+		ball.isMoving = false;
+		ball.velocity = new THREE.Vector3();
+		ball.distance = 0;
+		interactiveBalls.push(ball);
+		scene.add(ball);
+		let ballBB = new THREE.Box3().setFromObject(ball);
+		interactiveBallBBs.push(ballBB);
+		console.log("here")
+	}
 	
 	for(let ball of interactiveBalls){
 		lastBallPositions.push(ball.position.clone());
@@ -177,16 +185,16 @@ async function init(){
 	// controllers
 	function onSelectStart() {
 		this.userData.isSelecting = true;
+		taking = true;
 		grabAction.play();
-		// grabAction.fadeOut(1);
 		grabAction.reset();
 	}
 
 	function onSelectEnd() {
 		this.userData.isSelecting = false;
+		throwing = true;
 		grabAction.stop();
 		throwAction.play();
-		// throwAction.fadeOut(1);
 		throwAction.reset();
 	}
 
@@ -285,6 +293,10 @@ function updateOrientation() {
 		dummyCam.getWorldQuaternion(dolly.quaternion);
 		dolly.translateX(x * 0.05);
 		dolly.translateZ(z* 0.05);
+		if(dolly.position.x > boundary) dolly.position.x = boundary;
+		if(dolly.position.x < -boundary) dolly.position.x = -boundary;
+		if(dolly.position.z > boundary ) dolly.position.z = boundary;
+		if(dolly.position.z < -boundary) dolly.position.z = -boundary;
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -301,6 +313,7 @@ function render(){
 	moveBall();
 	sendPlayerData();
 	updateMixers(deltaTime)
+	console.log(conns);
 	renderer.render( scene, camera );
 }
 
@@ -315,6 +328,16 @@ peer.on('open', function(id) {
 peer.on('error', function (err) {
 	console.log(err);
 	// alert('' + err);
+});
+
+peer.on('connection', (conn) => {
+	conn.on('open', () => {		
+		console.log("Connection established with", conn.peer);		
+		createOtherPlayer();
+		conns.push(conn);
+		receiveData();
+		remotePeers.push(conn.peer);
+	});
 });
 
 //Connect to host and other available Peers
@@ -356,23 +379,39 @@ const receiveData = () => {
 			// other players current position and looking direction
 			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
 			otherPlayers[i].rotation.y = data[1] * -1;			
-			// otherPlayers[i].rotation.y += Math.PI;
-			playOppAnimation(data[2]);
-			console.log(data[2]);
+
+			//Play walk, grab and throw animations of other playes
+			playWalkAnimation(data[2], i);
+			if(data[3]){
+				grabAction = mixers[i].clipAction(grabClip);
+				grabAction.setLoop(THREE.LoopOnce);
+				grabAction.setEffectiveTimeScale(1.5);
+				grabAction.play();
+				grabAction.reset();
+			}
+			if(data[4]){
+				grabAction.stop();
+				throwAction = mixers[i].clipAction(throwClip);
+				throwAction.setLoop(THREE.LoopOnce);
+				throwAction.setEffectiveTimeScale(1.3);
+				throwAction.play();
+				throwAction.reset();
+			}
 		});
 	}	
 }	
 
 // Send player data to all current connections
 const sendPlayerData = () => {
-		let cameraPos = new THREE.Vector3();
-		let cameraQuat = new THREE.Quaternion();
-		dummyCam.getWorldPosition(cameraPos);
-		dummyCam.getWorldQuaternion(cameraQuat);
-		const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-		euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y, activeAction._clip.name];
-
+	let cameraPos = new THREE.Vector3();
+	let cameraQuat = new THREE.Quaternion();
+	dummyCam.getWorldPosition(cameraPos);
+	dummyCam.getWorldQuaternion(cameraQuat);
+	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+	euler.setFromQuaternion(cameraQuat, 'YXZ');
+	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing];
+	taking = false;
+	throwing = false;
 	for(let conn of conns){
 		conn.send(playerData);
 	}
@@ -381,11 +420,6 @@ const sendPlayerData = () => {
 function playAnimation(name){
 	clip = THREE.AnimationClip.findByName(clips, name);
 	activeAction = mixer.clipAction(clip);
-	// if(grabAction.isRunning() || throwAction.isRunning()){
-	// 	activeAction.setEffectiveWeight(0.7);
-	// } else{
-	// 	activeAction.setEffectiveWeight(1);
-	// }	
 }
 
 
@@ -415,18 +449,20 @@ function grabBall(ball, index){
 		if(ball.isMoving){
 			ball.isMoving = false;
 		}
+		if(controller2.children.length < 2){
 		controller2.attach(ball);	
 		selectedObject = ball;
-		let vel_dist = calculateBallVelocityAndDistance(ball, index);
-		ball.velocity.copy(vel_dist[0]);
-		ball.distance = vel_dist[1];
+		}		
+		let vel_dist = calculateBallVelocityAndDistance(selectedObject, index);
+		selectedObject.velocity.copy(vel_dist[0]);
+		selectedObject.distance = vel_dist[1];
 
 	} else if (selectedObject && controller2.userData.isSelecting === false){
-		selectedObject = null;
-		group.attach(ball);
-		if(ball.distance > 0.0001 || ball.position.y > 1){
-			ball.isMoving = true;
+		group.attach(selectedObject);
+		if(selectedObject.distance > 0.0001 || selectedObject.position.y > 1){
+			selectedObject.isMoving = true;
 		}
+		selectedObject = null;		
 	}
 }
 
@@ -467,10 +503,10 @@ function moveBall(){
 
 function ball_walltouch(index){	
 	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[0]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[2])){
-		ball.velocity.z *= -0.9;
+		interactiveBalls[index].velocity.z *= -0.9;
 	}
 	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[1]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[3])){
-		ball.velocity.x *= -0.9;
+		interactiveBalls[index].velocity.x *= -0.9;
 	}
 }
 
@@ -497,19 +533,19 @@ const createOtherPlayer = () => {
 	actAction.play();
 }
 
-function playOppAnimation(name){
-	for(let i = 0; i < mixers.length; i++){
-		prevActions[i] = activeActions[i];
-		clip = THREE.AnimationClip.findByName(clips, name);
-		activeActions[i] = mixers[i].clipAction(clip);
+function playWalkAnimation(name, index){
+	
+	prevActions[index] = activeActions[index];
+	clip = THREE.AnimationClip.findByName(clips, name);
+	activeActions[index] = mixers[index].clipAction(clip);
 
-		if ( prevActions[i] !== activeActions[i] ) {
-			prevActions[i].fadeOut( 0.5 );
-			activeActions[i].reset();
-			activeActions[i].fadeIn( 0.5 );
+	if ( prevActions[index] !== activeActions[index] ) {
+		prevActions[index].fadeOut( 0.5 );
+		activeActions[index].reset();
+		activeActions[index].fadeIn( 0.5 );
 		}
-		activeActions[i].play();
-	}
+	activeActions[index].play();
+	
 }
 
 function updateMixers(deltaTime){
