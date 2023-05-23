@@ -12,7 +12,6 @@ let obstacle, obstacle2, obstacle3, obstacle4;
 let obstacleBB, playerBB, playerBBHelper;
 let dolly;
 let player = new THREE.Object3D();
-let opponent = new THREE.Object3D();
 let otherPlayers = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
@@ -31,6 +30,8 @@ let gamepad;
 let robot = new THREE.Object3D();
 const clock = new THREE.Clock();
 let mixers = [];
+let activeActions = []
+let prevActions = [];
 let mixer, clips, clip, grabClip, throwClip, activeAction, prevAction, grabAction, throwAction;
 let group = new THREE.Group();
 
@@ -65,7 +66,7 @@ async function init(){
 	clips = loadedData.animations;
 	clip = THREE.AnimationClip.findByName(clips, "idle");
 	activeAction = mixer.clipAction(clip);
-	activeAction.play();
+	// activeAction.play();
 
 	grabClip = THREE.AnimationClip.findByName(clips, "take");
 	grabAction = mixer.clipAction(grabClip);
@@ -87,7 +88,7 @@ async function init(){
 	renderer.xr.enabled = true;
 	scene.add(group);
 	
-	scene.add(player);
+	// scene.add(player);
 
 	const environment = new RoomEnvironment();
 	const pmremGenerator = new THREE.PMREMGenerator( renderer );
@@ -98,8 +99,8 @@ async function init(){
 	camera.position.set( 0, 1.6, 0 );
 
 	playerBB = new THREE.Box3().setFromObject(player);
-	playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
-	scene.add( playerBBHelper );
+	// playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
+	// scene.add( playerBBHelper );
 
 	// Add floor
 	const ground = new THREE.Mesh(
@@ -175,7 +176,6 @@ async function init(){
 	function onSelectStart() {
 		this.userData.isSelecting = true;
 		grabAction.play();
-		// grabAction.fadeOut(1);
 		grabAction.reset();
 	}
 	
@@ -183,7 +183,6 @@ async function init(){
 		this.userData.isSelecting = false;
 		grabAction.stop();
 		throwAction.play();
-		// throwAction.fadeOut(1);
 		throwAction.reset();
 	}
 
@@ -280,8 +279,8 @@ function updateOrientation() {
 		// Use joystick input to move camera
 		const quaternion = dolly.quaternion.clone();
 		dummyCam.getWorldQuaternion(dolly.quaternion);
-		dolly.translateX(x * 0.08);
-		dolly.translateZ(z* 0.08);
+		dolly.translateX(x * 0.05);
+		dolly.translateZ(z* 0.05);
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -297,7 +296,7 @@ function render(){
 	updateRaycaster();
 	moveBall();
 	sendPlayerData();
-	if(mixer) mixer.update(deltaTime);
+	updateMixers(deltaTime)
 	renderer.render( scene, camera );
 }
 
@@ -334,6 +333,8 @@ const receiveData = () => {
 			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
 			otherPlayers[i].rotation.y = data[1] * -1;			
 			// otherPlayers[i].rotation.y += Math.PI;
+			playOppAnimation(data[2]);
+			console.log(data[2]);
 		});
 	}
 }
@@ -342,38 +343,25 @@ const receiveData = () => {
 const sendPlayerData = () => {
 	let cameraPos = new THREE.Vector3();
 	let cameraQuat = new THREE.Quaternion();
-	// let controllerPos = new THREE.Vector3();
-	// let controllerQuat = new THREE.Quaternion();
-	// controller2.getWorldPosition(controllerPos);
-	// controller2.getWorldQuaternion(controllerQuat);
 	dummyCam.getWorldPosition(cameraPos);
 	dummyCam.getWorldQuaternion(cameraQuat);
 	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 	euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y];
+	let playerData = [cameraPos, euler.y, activeAction._clip.name];
 
 	for(let conn of conns){
 		conn.send(playerData);
 	}
-		
 }
 
 function playAnimation(name){
-	prevAction = activeAction;
 	clip = THREE.AnimationClip.findByName(clips, name);
 	activeAction = mixer.clipAction(clip);
-	if(grabAction.isRunning() || throwAction.isRunning()){
-		activeAction.setEffectiveWeight(0.7);
-	} else{
-		activeAction.setEffectiveWeight(1);
-	}
-	
-	if ( prevAction !== activeAction ) {
-		prevAction.fadeOut( 0.5 );
-		activeAction.reset();
-		activeAction.fadeIn( 0.5 );
-	}
-	activeAction.play();
+	// if(grabAction.isRunning() || throwAction.isRunning()){
+	// 	activeAction.setEffectiveWeight(0.7);
+	// } else{
+	// 	activeAction.setEffectiveWeight(1);
+	// }	
 }
 
 
@@ -473,6 +461,36 @@ const createOtherPlayer = () => {
 	// Create other Player in Scene
 	// const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
 	let opponent = SkeletonUtils.clone(robot);
+	const oppMixer = new THREE.AnimationMixer(opponent);
 	scene.add(opponent);
-	otherPlayers.push(opponent);	
+	otherPlayers.push(opponent);
+	clip = THREE.AnimationClip.findByName(clips, "idle");
+	let actAction = oppMixer.clipAction(clip);
+	let preAction = actAction;
+	activeActions.push(actAction);
+	prevActions.push(preAction);
+	mixers.push(oppMixer);
+	actAction.play();
+}
+
+function playOppAnimation(name){
+	for(let i = 0; i < mixers.length; i++){
+		prevActions[i] = activeActions[i];
+		clip = THREE.AnimationClip.findByName(clips, name);
+		activeActions[i] = mixers[i].clipAction(clip);
+
+		if ( prevActions[i] !== activeActions[i] ) {
+			prevActions[i].fadeOut( 0.5 );
+			activeActions[i].reset();
+			activeActions[i].fadeIn( 0.5 );
+		}
+		activeActions[i].play();
+	}
+}
+
+function updateMixers(deltaTime){
+	if(mixer) mixer.update(deltaTime);
+	for(let mixer of mixers){
+		mixer.update(deltaTime);
+	}
 }
