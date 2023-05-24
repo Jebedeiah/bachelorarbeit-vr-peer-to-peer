@@ -8,7 +8,8 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 //Three variables
 let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
-let boundary = 28;
+let xBoundary_player = 28;
+let zBoundary_player = 43;
 let obstacle, obstacle2, obstacle3, obstacle4;
 let obstacleBB, playerBB, playerBBHelper;
 let dolly;
@@ -24,6 +25,7 @@ let interactiveBalls = [];
 let interactiveBallBBs = [];
 let lastBallPositions = [];
 let selectedObject;
+let floorHeight = 0.34;
 let objects = [];
 let obstacles = [];
 let collisionBoxes = [];
@@ -33,7 +35,7 @@ const clock = new THREE.Clock();
 let mixers = [];
 let activeActions = []
 let prevActions = [];
-let mixer, clips, clip, grabClip, throwClip, activeAction, prevAction, grabAction, throwAction;
+let mixer, clips, clip, grabClip, throwClip, activeAction, grabAction, throwAction;
 let throwing = false;
 let taking = false;
 let group = new THREE.Group();
@@ -46,7 +48,8 @@ let peerID;
 let remotePeerID;
 let firstMessage = true;
 
-const loader = new GLTFLoader();
+const gltfLoader = new GLTFLoader();
+const textureLoader = new THREE.TextureLoader();
 
 window.addEventListener('DOMContentLoaded', () => {
 	init();		
@@ -55,7 +58,7 @@ window.addEventListener('DOMContentLoaded', () => {
 // Three.js Code
 async function init(){
 	// GLTF Loader
-	const loadedData = await loader.loadAsync( 'public/models/robot_animations.glb');
+	const loadedData = await gltfLoader.loadAsync( 'public/models/robot_animations.glb');
 	robot = loadedData.scene;	
 	robot.traverse((obj) => {
 		if(obj.isMesh){
@@ -63,9 +66,19 @@ async function init(){
 			}
 		}			
 	)
-	robot.position.set(0, 0.5, 0);
+	robot.position.set(0, 0, 0);
 	robot.rotation.y += Math.PI;
 	player = SkeletonUtils.clone(robot);
+
+	const floorTexture = textureLoader.load('public/textures/floor_tiles.jpg');
+	floorTexture.wrapS = THREE.RepeatWrapping;
+	floorTexture.wrapT = THREE.RepeatWrapping;
+	floorTexture.repeat.set(5, 5);
+
+	const wallTexture = textureLoader.load('public/textures/wall_stones2.jpg');
+	wallTexture.wrapS = THREE.RepeatWrapping;
+	wallTexture.wrapT = THREE.RepeatWrapping;
+	wallTexture.repeat.set(2, 1);
 
 	mixer = new THREE.AnimationMixer(player);
 	clips = loadedData.animations;
@@ -97,10 +110,8 @@ async function init(){
 
 	const environment = new RoomEnvironment();
 	const pmremGenerator = new THREE.PMREMGenerator( renderer );
-
 	scene.background = new THREE.Color( 0x505050 );
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
-
 	camera.position.set( 0, 1.6, 0 );
 
 	playerBB = new THREE.Box3().setFromObject(player);
@@ -109,32 +120,33 @@ async function init(){
 
 	// Add floor
 	const ground = new THREE.Mesh(
-		new THREE.BoxGeometry(60, 1, 100),
-		new THREE.MeshStandardMaterial({ color: 0x222222 }));
+		new THREE.BoxGeometry(60, 0.1, 90),
+		new THREE.MeshStandardMaterial({ map: floorTexture }));
 	ground.castShadow = false;
 	ground.receiveShadow = true;
 
-	objects.push(ground);
+	// objects.push(ground);
  	scene.add(ground);
 
 	// Add walls
-	const geometry = new THREE.BoxGeometry( 60, 60, 2 );
-	const material = new THREE.MeshBasicMaterial( {color: 0x999999, side: THREE.DoubleSide} );
-	wall = new THREE.Mesh( geometry, material );
-	wall2 = wall.clone();
+	const shortGeometry = new THREE.BoxGeometry( 60, 30, 2 );
+	const longGeometry = new THREE.BoxGeometry( 90, 30, 2 );
+	const material = new THREE.MeshBasicMaterial( {map: wallTexture} );
+	wall = new THREE.Mesh( shortGeometry, material );
+	wall2 = new THREE.Mesh( longGeometry, material );
 	wall3 = wall.clone();
-	wall4 = wall.clone();
-	wall.position.set(0, 5, -30);
+	wall4 = wall2.clone();
+	wall.position.set(0, 15, -45);
 	const wallBB = new THREE.Box3().setFromObject(wall);
 	collisionBoxes.push(wallBB);
-	wall2.position.set(-30, 5, 0);
+	wall2.position.set(-30, 15, 0);
 	wall2.rotateY(Math.PI / 2);
 	const wall2BB = new THREE.Box3().setFromObject(wall2);
 	collisionBoxes.push(wall2BB);
-	wall3.position.set(0, 5, 30);
+	wall3.position.set(0, 15, 45);
 	const wall3BB = new THREE.Box3().setFromObject(wall3);
 	collisionBoxes.push(wall3BB);
-	wall4.position.set(30, 5, 0);
+	wall4.position.set(30, 15, 0);
 	wall4.rotateY(Math.PI / 2);
 	const wall4BB = new THREE.Box3().setFromObject(wall4);
 	collisionBoxes.push(wall4BB);
@@ -159,12 +171,12 @@ async function init(){
 	obstacleBB = new THREE.Box3().setFromObject(obstacle);
 	collisionBoxes.push(obstacleBB);
 
-	// Ball the player can interact with
+	// Balls the player can interact with
 	for(let i = 0; i < 10; i++){
 		let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
 		ball.position.x = (i * 5 - 25);
 		ball.position.z = 0;
-		ball.position.y = 0.8; 
+		ball.position.y = floorHeight; 
 		ball.isMoving = false;
 		ball.velocity = new THREE.Vector3();
 		ball.distance = 0;
@@ -172,7 +184,6 @@ async function init(){
 		scene.add(ball);
 		let ballBB = new THREE.Box3().setFromObject(ball);
 		interactiveBallBBs.push(ballBB);
-		console.log("here")
 	}
 	
 	for(let ball of interactiveBalls){
@@ -293,10 +304,10 @@ function updateOrientation() {
 		dummyCam.getWorldQuaternion(dolly.quaternion);
 		dolly.translateX(x * 0.05);
 		dolly.translateZ(z* 0.05);
-		if(dolly.position.x > boundary) dolly.position.x = boundary;
-		if(dolly.position.x < -boundary) dolly.position.x = -boundary;
-		if(dolly.position.z > boundary ) dolly.position.z = boundary;
-		if(dolly.position.z < -boundary) dolly.position.z = -boundary;
+		if(dolly.position.x > xBoundary_player) dolly.position.x = xBoundary_player;
+		if(dolly.position.x < -xBoundary_player) dolly.position.x = -xBoundary_player;
+		if(dolly.position.z > zBoundary_player ) dolly.position.z = zBoundary_player;
+		if(dolly.position.z < -zBoundary_player) dolly.position.z = -zBoundary_player;
 		dolly.position.y = 0;
 		dolly.quaternion.copy(quaternion);
 	}
@@ -313,7 +324,6 @@ function render(){
 	moveBall();
 	sendPlayerData();
 	updateMixers(deltaTime)
-	console.log(conns);
 	renderer.render( scene, camera );
 }
 
@@ -377,8 +387,8 @@ const receiveData = () => {
 		
 		conns[i].on('data', (data) => {	
 			// other players current position and looking direction
-			otherPlayers[i].position.set(data[0].x, 0.5, data[0].z);
-			otherPlayers[i].rotation.y = data[1] * -1;			
+			otherPlayers[i].position.set(data[0].x, 0.04, data[0].z);
+			otherPlayers[i].rotation.y = data[1] * -1;
 
 			//Play walk, grab and throw animations of other playes
 			playWalkAnimation(data[2], i);
@@ -397,24 +407,42 @@ const receiveData = () => {
 				throwAction.play();
 				throwAction.reset();
 			}
+			console.log(data[5]);
+			for(let ballData of data[5]){
+				interactiveBalls[ballData[0]].position.copy(ballData[1]);
+			}
 		});
 	}	
 }	
 
 // Send player data to all current connections
-const sendPlayerData = () => {
+function sendPlayerData() {
 	let cameraPos = new THREE.Vector3();
 	let cameraQuat = new THREE.Quaternion();
+	let ballPosData = getBallPos();
 	dummyCam.getWorldPosition(cameraPos);
 	dummyCam.getWorldQuaternion(cameraQuat);
 	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 	euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing];
+	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData];
 	taking = false;
 	throwing = false;
 	for(let conn of conns){
 		conn.send(playerData);
 	}
+}
+
+function getBallPos(){
+	let ballPosData = [];
+	for(let i = 0; i < interactiveBalls.length; i++){
+		if(interactiveBalls[i].distance > 0.0001){			
+			let ballWorldPos = new THREE.Vector3();
+			interactiveBalls[i].getWorldPosition(ballWorldPos);
+			let data = [i, ballWorldPos];
+			ballPosData.push(data);
+		}		
+	}
+	return ballPosData;
 }
 
 function playAnimation(name){
@@ -487,12 +515,12 @@ function moveBall(){
 			ball.velocity.y -= gravity;
 			ball.velocity.multiplyScalar(0.995);
 			ball.distance = lastPosition.distanceTo(ball.position);			
-			if(ball.position.y < 0.8 ){
-				ball.position.y = 0.8;
+			if(ball.position.y < floorHeight ){
+				ball.position.y = floorHeight;
 				ball.velocity.y *= -bounceFactor;
 				if(ball.velocity.y < 0.02) ball.velocity.y = 0;
 			}
-			if(ball.distance < 0.025 && ball.position.y === 0.8){
+			if(ball.distance < 0.025 && ball.position.y === floorHeight){
 				ball.isMoving = false;
 		}
 			interactiveBallBBs[i].setFromObject(ball);
@@ -540,9 +568,9 @@ function playWalkAnimation(name, index){
 	activeActions[index] = mixers[index].clipAction(clip);
 
 	if ( prevActions[index] !== activeActions[index] ) {
-		prevActions[index].fadeOut( 0.5 );
+		prevActions[index].fadeOut( 0.3 );
 		activeActions[index].reset();
-		activeActions[index].fadeIn( 0.5 );
+		activeActions[index].fadeIn( 0.3 );
 		}
 	activeActions[index].play();
 	
