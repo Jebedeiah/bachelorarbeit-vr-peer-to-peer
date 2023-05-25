@@ -10,17 +10,20 @@ let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
 let xBoundary_player = 28;
 let zBoundary_player = 43;
-let obstacle, obstacle2, obstacle3, obstacle4;
-let obstacleBB, playerBB, playerBBHelper;
 let dolly;
 let player = new THREE.Object3D();
+let playerHit = false;
 let otherPlayers = [];
+let otherPlayersCages = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let tempMatrix = new THREE.Matrix4();
 let raycaster = new THREE.Raycaster();
 let maxRayDistance = 1.5;
 const radius = 0.3;
+let cage;
+let cageBB;
+let cageBBHelper;
 let interactiveBalls = [];
 let interactiveBallBBs = [];
 let lastBallPositions = [];
@@ -66,7 +69,6 @@ async function init(){
 			}
 		}			
 	)
-	robot.position.set(0, 0, 0);
 	robot.rotation.y += Math.PI;
 	player = SkeletonUtils.clone(robot);
 
@@ -114,10 +116,6 @@ async function init(){
 	scene.environment = pmremGenerator.fromScene( environment ).texture;
 	camera.position.set( 0, 1.6, 0 );
 
-	playerBB = new THREE.Box3().setFromObject(player);
-	// playerBBHelper = new THREE.Box3Helper( playerBB, 0xffff00 );
-	// scene.add( playerBBHelper );
-
 	// Add floor
 	const ground = new THREE.Mesh(
 		new THREE.BoxGeometry(60, 0.1, 90),
@@ -153,27 +151,18 @@ async function init(){
 	objects.push(wall, wall2, wall3, wall4)	
 	scene.add( wall, wall2, wall3, wall4 );
 	
-	// Add obstacles
-	obstacle = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), new THREE.MeshStandardMaterial({ color: 0x11ff11 }));
-	obstacle.position.set(-30, 5, -20);
-	obstacle.castShadow = true;
-	objects.push(obstacle);
-	scene.add(obstacle);
-
-	// 	scene.add(obs);
-	// for(let i = 0; i < 10; i++){
-	// 	const obs = obstacle.copy();
-	// 	objects.push(obs);
-	// 	scene.add(obs);
-	// }
+	// Cage for hit players
+	cage = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 0.7), new THREE.MeshStandardMaterial({ color: 0xEA430A, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
+	cage.castShadow = false;
+	cage.visible = false;
+	cage.position.set(camera.position.x, 0.95, camera.position.z);
+	cageBB = new THREE.Box3().setFromObject(cage);
+	scene.add(cage);
 
 	
-	obstacleBB = new THREE.Box3().setFromObject(obstacle);
-	collisionBoxes.push(obstacleBB);
-
 	// Balls the player can interact with
 	for(let i = 0; i < 10; i++){
-		let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 12, 12), new THREE.MeshStandardMaterial({color: 0xffff77}));
+		let ball = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 12), new THREE.MeshStandardMaterial({color: 0xCDDC51}));
 		ball.position.x = (i * 5 - 25);
 		ball.position.z = 0;
 		ball.position.y = floorHeight; 
@@ -245,7 +234,7 @@ async function init(){
 	dolly = new THREE.Group();
 	dummyCam = new THREE.Group();
 	
-    dolly.position.set(0, 0, 0);
+    dolly.position.set(0, 0, 5);
     scene.add(dolly);
     dolly.add(camera);
 	camera.add(dummyCam);
@@ -253,7 +242,7 @@ async function init(){
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
-	// dolly.add(robot);
+	dolly.add(cage);
 
 	animate();
 }
@@ -284,9 +273,16 @@ function updateOrientation() {
 	if(gamepad){
 		let input;
 		input = gamepad.axes;
+		let x;
+		let z;
 
-		let x = input[2];
-		let z = input[3];
+		if(playerHit){
+			x = 0;
+			z = 0;
+		} else{
+			x = input[2];
+			z = input[3];
+		}		
 	
 		if(z < -0.5 ){
 			playAnimation("running");
@@ -322,6 +318,7 @@ function render(){
 	updateOrientation();
 	updateRaycaster();
 	moveBall();
+	checkPlayerHit();
 	sendPlayerData();
 	updateMixers(deltaTime)
 	renderer.render( scene, camera );
@@ -407,10 +404,13 @@ const receiveData = () => {
 				throwAction.play();
 				throwAction.reset();
 			}
-			console.log(data[5]);
 			for(let ballData of data[5]){
 				interactiveBalls[ballData[0]].position.copy(ballData[1]);
 			}
+			if(data[6]){
+				otherPlayersCages[i].position.set(data[0].x, 0.95, data[0].z);
+				otherPlayersCages[i].visible = true;
+			} else{ otherPlayersCages[i].visible = false; }
 		});
 	}	
 }	
@@ -424,7 +424,7 @@ function sendPlayerData() {
 	dummyCam.getWorldQuaternion(cameraQuat);
 	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 	euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData];
+	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData, playerHit];
 	taking = false;
 	throwing = false;
 	for(let conn of conns){
@@ -462,7 +462,7 @@ function updateRaycaster() {
 			grabBall(intersects[0].object, i)
 		}
 		else{
-			interactiveBalls[i].material.color.set(0xffff77);
+			interactiveBalls[i].material.color.set(0xCDDC51);
 			if(interactiveBalls[i].parent !== group){
 				group.attach(interactiveBalls[i]);
 				interactiveBalls[i].velocity.set(0,0,0);
@@ -505,7 +505,7 @@ function calculateBallVelocityAndDistance(ball, index){
 }
 
 function moveBall(){
-	let bounceFactor = 0.8;
+	let bounceFactor = 0.5;
 	let gravity = 0.003;
 	for(let i = 0; i < interactiveBalls.length; i++){
 		let ball = interactiveBalls[i];
@@ -529,12 +529,28 @@ function moveBall(){
 	}
 }
 
+function checkPlayerHit(){
+	cageBB.setFromObject(cage);
+	for(let i = 0; i < interactiveBallBBs.length; i++){
+		if(interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB)){
+			cage.visible = true;
+			playerHit = true;
+			setTimeout(continueMovement, 3000);
+		}
+	}
+}
+
+function continueMovement(){
+	playerHit = false;
+	cage.visible = false;
+}
+
 function ball_walltouch(index){	
 	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[0]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[2])){
-		interactiveBalls[index].velocity.z *= -0.9;
+		interactiveBalls[index].velocity.z *= -0.5;
 	}
 	if(interactiveBallBBs[index].intersectsBox(collisionBoxes[1]) || interactiveBallBBs[index].intersectsBox(collisionBoxes[3])){
-		interactiveBalls[index].velocity.x *= -0.9;
+		interactiveBalls[index].velocity.x *= -0.5;
 	}
 }
 
@@ -552,6 +568,9 @@ const createOtherPlayer = () => {
 	const oppMixer = new THREE.AnimationMixer(opponent);
 	scene.add(opponent);
 	otherPlayers.push(opponent);
+	let oppCage = cage.clone();
+	scene.add(oppCage);
+	otherPlayersCages.push(oppCage);
 	clip = THREE.AnimationClip.findByName(clips, "idle");
 	let actAction = oppMixer.clipAction(clip);
 	let preAction = actAction;
