@@ -1,39 +1,49 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 
 //Three variables
 let camera, dummyCam, scene, renderer;
 let wall, wall2, wall3, wall4;
-let xBoundary_player = 28;
-let zBoundary_player = 43;
+let redBase, blueBase;
+let redBaseBB, blueBaseBB;
+let redFlag, blueFlag;
+let redFlagBB, blueFlagBB;
+let flag_in_base = true;
+const xBoundary_player = 28;
+const zBoundary_player = 43;
 let dolly;
 let player = new THREE.Object3D();
 let playerHit = false;
+let teamColor = "red";
 let otherPlayers = [];
 let otherPlayersCages = [];
 let controller1, controller2;
 let controllerGrip1, controllerGrip2;
 let tempMatrix = new THREE.Matrix4();
-let raycaster = new THREE.Raycaster();
-let maxRayDistance = 1.5;
+let grabRaycaster = new THREE.Raycaster();
+let moveRaycasters = [];
+const maxRayDistance = 1.5;
 const radius = 0.3;
 let cage;
 let cageBB;
-let cageBBHelper;
 let interactiveBalls = [];
 let interactiveBallBBs = [];
 let lastBallPositions = [];
 let selectedObject;
-let floorHeight = 0.34;
-let objects = [];
-let obstacles = [];
+const floorHeight = 0.34;
+const numBoxes = 6;
+const obstacles = [];
+let boxPositions = [];
+let obstacleBBs = [];
+const groundWidth = 60;
+const groundLength = 90;
 let collisionBoxes = [];
 let gamepad;
 let robot = new THREE.Object3D();
+let baseFlag = new THREE.Object3D();
 const clock = new THREE.Clock();
 let mixers = [];
 let activeActions = []
@@ -48,6 +58,7 @@ let remotePeers = ["host"];
 let conns = [];
 let peer = new Peer("host");
 let peerID;
+let connectedPlayers = 0;
 
 const gltfLoader = new GLTFLoader();
 const textureLoader = new THREE.TextureLoader();
@@ -59,8 +70,8 @@ window.addEventListener('DOMContentLoaded', () => {
 // Three.js Code
 async function init(){
 	// GLTF Loader
-	const loadedData = await gltfLoader.loadAsync( 'public/models/robot_animations.glb');
-	robot = loadedData.scene;
+	const robotData = await gltfLoader.loadAsync( 'public/models/robot_animations.glb');
+	robot = robotData.scene;
 	robot.traverse((obj) => {
 		if(obj.isMesh){
 				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
@@ -70,10 +81,14 @@ async function init(){
 	robot.rotation.y += Math.PI;
 	player = SkeletonUtils.clone(robot);
 
+	const flagData = await gltfLoader.loadAsync( 'public/models/base_flag.glb');
+	baseFlag = flagData.scene;
+	baseFlag.castShadow = true;
+	
 	const floorTexture = textureLoader.load('public/textures/floor_tiles.jpg');
 	floorTexture.wrapS = THREE.RepeatWrapping;
 	floorTexture.wrapT = THREE.RepeatWrapping;
-	floorTexture.repeat.set(5, 5);
+	floorTexture.repeat.set(2, 4);
 
 	const wallTexture = textureLoader.load('public/textures/wall_stones2.jpg');
 	wallTexture.wrapS = THREE.RepeatWrapping;
@@ -81,10 +96,9 @@ async function init(){
 	wallTexture.repeat.set(2, 1);
 	
 	mixer = new THREE.AnimationMixer(player);
-	clips = loadedData.animations;
+	clips = robotData.animations;
 	clip = THREE.AnimationClip.findByName(clips, "idle");
 	activeAction = mixer.clipAction(clip);
-	// activeAction.play();
 
 	grabClip = THREE.AnimationClip.findByName(clips, "take");
 	grabAction = mixer.clipAction(grabClip);
@@ -104,24 +118,32 @@ async function init(){
 	document.body.appendChild( renderer.domElement );
 	document.body.appendChild( VRButton.createButton( renderer ) );
 	renderer.xr.enabled = true;
+	renderer.shadowMap.enabled = true;
 	scene.add(group);
-	
-	// scene.add(player);
 
-	const environment = new RoomEnvironment();
-	const pmremGenerator = new THREE.PMREMGenerator( renderer );
 	scene.background = new THREE.Color( 0x505050 );
-	scene.environment = pmremGenerator.fromScene( environment ).texture;
+	const ambientLight = new THREE.AmbientLight( 0x404040 ); // soft white directionalLight
+	scene.add( ambientLight )
+	let directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+	directionalLight.position.set(-5, 15, -5);
+	directionalLight.castShadow = true;
+	scene.add(directionalLight);
+	directionalLight.shadow.camera.top = 45;
+	directionalLight.shadow.camera.bottom = -45;
+	directionalLight.shadow.camera.left = -30;
+	directionalLight.shadow.camera.right = 30;
+	directionalLight.shadow.mapSize.width = 2048;
+	directionalLight.shadow.mapSize.height = 2048;
+
 	camera.position.set( 0, 1.6, 0 );
 
 	// Add floor
 	const ground = new THREE.Mesh(
-		new THREE.BoxGeometry(60, 0.1, 90),
+		new THREE.BoxGeometry(groundWidth, 0.1, groundLength),
 		new THREE.MeshStandardMaterial({ map: floorTexture }));
 	ground.castShadow = false;
 	ground.receiveShadow = true;
 
-	// objects.push(ground);
  	scene.add(ground);	
 
 	// Add walls
@@ -146,14 +168,43 @@ async function init(){
 	wall4.rotateY(Math.PI / 2);
 	const wall4BB = new THREE.Box3().setFromObject(wall4);
 	collisionBoxes.push(wall4BB);
-	objects.push(wall, wall2, wall3, wall4)
 	scene.add( wall, wall2, wall3, wall4 );
+
+	// Add bases
+	redBase = new THREE.Mesh(new THREE.BoxGeometry(10, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0xff0000, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
+	redBase.castShadow = false;
+	redBase.position.set(0, 0.25, 40);
+	redBaseBB = new THREE.Box3().setFromObject(redBase);
+	scene.add(redBase);
+
+	blueBase = new THREE.Mesh(new THREE.BoxGeometry(10, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0x0000ff, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
+	blueBase.castShadow = false;
+	blueBase.position.set(0, 0.25, -40);
+	blueBaseBB = new THREE.Box3().setFromObject(blueBase);
+	scene.add(blueBase);
+
+	// Add base flags
+	redFlag = baseFlag.clone();
+	redFlag.children[0].material = new THREE.MeshStandardMaterial({color: 0xff0000})
+	redFlag.rotation.y += Math.PI / 2;
+	redFlagBB = new THREE.Box3();
+	blueFlag = baseFlag.clone();
+	blueFlag.children[0].material = new THREE.MeshStandardMaterial({color: 0x0000ff})
+	blueFlag.rotation.y -= Math.PI / 2;
+	blueFlagBB = new THREE.Box3();
+	scene.add(redFlag)
+	scene.add(blueFlag)
+
+	// Create Obstacles
+	createObstacles("red");
+	createObstacles("blue");
 	
+
 	// Cage for hit players
 	cage = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 0.7), new THREE.MeshStandardMaterial({ color: 0xEA430A, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
 	cage.castShadow = false;
 	cage.visible = false;
-	cage.position.set(camera.position.x, 0.95, camera.position.z);
+	cage.position.set(camera.position.x, 0.94, camera.position.z);
 	cageBB = new THREE.Box3().setFromObject(cage);
 
 	
@@ -166,6 +217,7 @@ async function init(){
 		ball.isMoving = false;
 		ball.velocity = new THREE.Vector3();
 		ball.distance = 0;
+		ball.castShadow = true;
 		interactiveBalls.push(ball);
 		scene.add(ball);
 		let ballBB = new THREE.Box3().setFromObject(ball);
@@ -176,8 +228,17 @@ async function init(){
 		lastBallPositions.push(ball.position.clone());
 	}
 
-	// Raycaster maximum Distanz entspricht Größe der Karte
-	raycaster.far = maxRayDistance;
+	grabRaycaster.far = maxRayDistance;	
+
+
+	// moveRaycasters
+	function createMoveRaycasters() {
+		for(let i = 0; i < 4; i++){
+			let raycaster = new THREE.Raycaster();
+			raycaster.far = 1;
+			moveRaycasters.push(raycaster);
+		}
+	}
 
 	// controllers
 	function onSelectStart() {
@@ -230,8 +291,10 @@ async function init(){
 
 	dolly = new THREE.Group();
 	dummyCam = new THREE.Group();
+
+	createMoveRaycasters();
 	
-    dolly.position.set(0, 0, 5);
+    dolly.position.set(-25, 0, 40);
     scene.add(dolly);
     dolly.add(camera);
 	camera.add(dummyCam);
@@ -242,6 +305,74 @@ async function init(){
 	dolly.add(cage);
 
 	animate();
+}
+
+function createObstacles(side){
+	for (let i = 0; i < numBoxes; i++) {
+		const boxWidth = 8;
+		const boxHeight = 10;
+		const boxLength = 8;
+		
+		const boxGeometry = new THREE.BoxGeometry(boxWidth, boxHeight, boxLength);
+		const boxMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+		const box = new THREE.Mesh(boxGeometry, boxMaterial);
+		box.castShadow = true;
+		box.receiveShadow = true;
+		
+		let isColliding = false;
+		
+		do {
+			const randomX = Math.random() * (groundWidth - boxWidth) - (groundWidth / 2 - boxWidth / 2);
+			const randomZ = Math.random() * (groundLength - boxLength) - (groundLength / 2 - boxLength / 2);
+		
+			// Überprüfe auf Kollision mit bereits platzierten Boxen
+			isColliding = false;
+			for (const placedBox of obstacles) {
+				if (
+					Math.abs(randomX - placedBox.position.x) < (boxWidth + placedBox.geometry.parameters.width) / 2 &&
+					Math.abs(randomZ - placedBox.position.z) < (boxLength + placedBox.geometry.parameters.depth) / 2
+				) {
+					
+					isColliding = true;
+					break;
+				}
+			}
+
+			if(side === "blue"){
+				// Überprüfe, ob die Box die Grenzen des Bodens überschreitet oder außerhalb von z = -2 bis z = 2 liegt
+				if (
+					Math.abs(randomX) + boxWidth / 2 > groundWidth / 2 ||
+					Math.abs(randomZ) + boxLength / 2 > groundLength / 2 || randomZ < 5 || randomZ > 30
+				) {
+					isColliding = true;
+				}
+			}
+			else if(side === "red"){
+				// Überprüfe, ob die Box die Grenzen des Bodens überschreitet oder außerhalb von z = -2 bis z = 2 liegt
+				if (
+					Math.abs(randomX) + boxWidth / 2 > groundWidth / 2 ||
+					Math.abs(randomZ) + boxLength / 2 > groundLength / 2 || randomZ > -5 || randomZ < -30 
+				) {
+					isColliding = true;
+				}
+			}
+		
+			// Setze die Position der Box, falls keine Kollision auftritt
+			if (!isColliding) {
+			box.position.set(randomX, boxHeight / 2, randomZ);
+			}
+		} while (isColliding);
+		
+		// Füge die Box der Liste hinzu und platziere sie in der Szene
+		if(box.position.z < -5){
+			boxMaterial.color.set(0x0000ff)
+		}
+		let boxBB = new THREE.Box3().setFromObject(box);
+		obstacleBBs.push(boxBB);
+		obstacles.push(box);
+		boxPositions.push(box.position);
+		scene.add(box);
+	}
 }
 
 function buildController() {
@@ -260,7 +391,7 @@ function buildController() {
 function buildRaycasterLine(){
 	// Raycaster
 	const rayMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
-	const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+	const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1.5)]);
 
 	return new THREE.Line(rayGeometry, rayMaterial);
 }
@@ -268,18 +399,9 @@ function buildRaycasterLine(){
 function updateOrientation() {
 	// Get joystick input		
 	if(gamepad){
-		let input;
-		input = gamepad.axes;
-		let x;
-		let z;
-
-		if(playerHit){
-			x = 0;
-			z = 0;
-		} else{
-			x = input[2];
-			z = input[3];
-		}		
+		let input = gamepad.axes;
+		let x = playerHit ? 0 : input[2];
+		let z = playerHit ? 0 : input[3];
 	
 		if(z < -0.5 ){
 			playAnimation("running");
@@ -293,17 +415,25 @@ function updateOrientation() {
 			playAnimation("idle");
 		}
 		// Use joystick input to move camera
-		const quaternion = dolly.quaternion.clone();
-		dummyCam.getWorldQuaternion(dolly.quaternion);
-		dolly.translateX(x * 0.05);
-		dolly.translateZ(z* 0.05);
-		if(dolly.position.x > xBoundary_player) dolly.position.x = xBoundary_player;
-		if(dolly.position.x < -xBoundary_player) dolly.position.x = -xBoundary_player;
-		if(dolly.position.z > zBoundary_player ) dolly.position.z = zBoundary_player;
-		if(dolly.position.z < -zBoundary_player) dolly.position.z = -zBoundary_player;
-		dolly.position.y = 0;
-		dolly.quaternion.copy(quaternion);
+		moveCameraWithJoystick(x, z)
 	}
+}
+
+function moveCameraWithJoystick(x, z) {
+	setRaycastersFromPlayer();
+	const newXZ = updateMoveRaycasters(x, z);
+	const newX = newXZ[0];
+	const newZ = newXZ[1];
+    const quaternion = dolly.quaternion.clone();
+    dummyCam.getWorldQuaternion(dolly.quaternion);
+    dolly.translateX(newX * 0.05);
+    dolly.translateZ(newZ * 0.05);
+    if (dolly.position.x > xBoundary_player) dolly.position.x = xBoundary_player;
+    if (dolly.position.x < -xBoundary_player) dolly.position.x = -xBoundary_player;
+    if (dolly.position.z > zBoundary_player) dolly.position.z = zBoundary_player;
+    if (dolly.position.z < -zBoundary_player) dolly.position.z = -zBoundary_player;
+    dolly.position.y = 0;
+    dolly.quaternion.copy(quaternion);
 }
 
 function animate() {		
@@ -313,11 +443,13 @@ function animate() {
 function render(){
 	const deltaTime = clock.getDelta();
 	updateOrientation();
-	updateRaycaster();
+	updateGrabRaycaster();
 	moveBall();
 	checkPlayerHit();
 	sendPlayerData();
-	updateMixers(deltaTime)
+	updateMixers(deltaTime);
+	floatingFlags();
+	collectEnemyFlag()
 	renderer.render( scene, camera );
 }
 
@@ -333,17 +465,21 @@ peer.on('error', function (err) {
 });
 
 peer.on('connection', (conn) => {
-	conn.on('open', () => {
-		conn.send(remotePeers);
-		console.log("Connection established with", conn.peer);
-
-		//Create other Player in Scene
-		createOtherPlayer();
-
-		conns.push(conn);
-		receiveData();
-		remotePeers.push(conn.peer);
-	});
+	if(connectedPlayers < 3) {
+		conn.on('open', () => {
+			connectedPlayers++;
+			conn.send([remotePeers, boxPositions, connectedPlayers]);
+			console.log("Connection established with", conn.peer);
+			
+			//Create other Player in Scene
+			createOtherPlayer();
+			
+			conns.push(conn);
+			receiveData();
+			remotePeers.push(conn.peer);
+		});
+	}
+	
 });
 
 const receiveData = () => {
@@ -373,9 +509,10 @@ const receiveData = () => {
 			}
 			for(let ballData of data[5]){
 				interactiveBalls[ballData[0]].position.copy(ballData[1]);
+				interactiveBalls[ballData[0]].isMoving = ballData[2];
 			}
 			if(data[6]){
-				otherPlayersCages[i].position.set(data[0].x, 0.95, data[0].z);
+				otherPlayersCages[i].position.set(data[0].x, 0.94, data[0].z);
 				otherPlayersCages[i].visible = true;
 			} else{ otherPlayersCages[i].visible = false; }
 		});
@@ -405,7 +542,7 @@ function getBallPos(){
 		if(interactiveBalls[i].distance > 0.0001){			
 			let ballWorldPos = new THREE.Vector3();
 			interactiveBalls[i].getWorldPosition(ballWorldPos);
-			let data = [i, ballWorldPos];
+			let data = [i, ballWorldPos, interactiveBalls[i].isMoving];
 			ballPosData.push(data);
 		}		
 	}
@@ -417,13 +554,30 @@ function playAnimation(name){
 	activeAction = mixer.clipAction(clip);
 }
 
+function floatingFlags(){
+	if(flag_in_base){
+		const amplitude = 0.2;
+		const frequency = 0.003;
+		redFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), 40);
+		redFlagBB.setFromObject(redFlag);
+		blueFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), -40);
+		blueFlagBB.setFromObject(blueFlag);
+	}
+}
 
-// Get raycaster rayEndPoint
-function updateRaycaster() {
+function collectEnemyFlag(){
+	if(cageBB.intersectsBox(blueFlagBB)){
+		flag_in_base = false;
+		dolly.attach(blueFlag);
+		blueFlag.position.set(0, 2, 0);
+	}
+}
+
+function updateGrabRaycaster() {
 	
-	setRaycasterFromController(raycaster, controller2);
+	setRaycasterFromController(grabRaycaster, controller2);	
 	for(let i = 0; i < interactiveBalls.length; i++){
-		const intersects = raycaster.intersectObject(interactiveBalls[i]);
+		const intersects = grabRaycaster.intersectObject(interactiveBalls[i]);
 		if(intersects.length > 0){
 			interactiveBalls[i].material.color.set(0xff0000);
 			grabBall(intersects[0].object, i)
@@ -437,6 +591,34 @@ function updateRaycaster() {
 			} 
 		}		
 	}
+}
+
+function updateMoveRaycasters(x, z){
+	let newX = x;
+	let newZ = z;
+	for(let obstacle of obstacles) {		
+		const intersects1 = moveRaycasters[0].intersectObject(obstacle);
+		const intersects2 = moveRaycasters[1].intersectObject(obstacle);
+		const intersects3 = moveRaycasters[2].intersectObject(obstacle);
+		const intersects4 = moveRaycasters[3].intersectObject(obstacle);
+		if(intersects1.length > 0 && z < -0.5){
+			newZ = 0;
+			(console.log("frontRay"))
+		}
+		if(intersects2.length > 0 && x > 0.5){
+			newX = 0;
+			(console.log("rightRay"))
+		}
+		if(intersects3.length > 0 && z > 0.5){
+			newZ = 0;
+			(console.log("backRay"))
+		}
+		if(intersects4.length > 0 && x < -0.5){
+			newX = 0;			
+			(console.log("leftRay"))
+		}		
+	}
+	return [newX, newZ];
 }
 
 function grabBall(ball, index){
@@ -492,6 +674,7 @@ function moveBall(){
 			}
 			interactiveBallBBs[i].setFromObject(ball);
 			ball_walltouch(i);
+			ball_obstacletouch(i)
 		}
 	}
 }
@@ -499,7 +682,7 @@ function moveBall(){
 function checkPlayerHit(){
 	cageBB.setFromObject(cage);
 	for(let i = 0; i < interactiveBallBBs.length; i++){
-		if(interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB)){
+		if(interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB) && !cage.visible){
 			cage.visible = true;
 			playerHit = true;
 			setTimeout(continueMovement, 3000);
@@ -521,11 +704,40 @@ function ball_walltouch(index){
 	}
 }
 
+function ball_obstacletouch(index){
+	for(let boxBB of obstacleBBs){
+		if(interactiveBallBBs[index].intersectsBox(boxBB)){
+			// Einfallswinkel berechnen
+			let incidentAngle = Math.atan2(interactiveBalls[index].velocity.y, interactiveBalls[index].velocity.x);
+
+			// Reflektionswinkel berechnen
+			let reflectionAngle = Math.PI + incidentAngle;	
+	
+			// Ausgangsgeschwindigkeit mit neuem Winkel setzen
+			interactiveBalls[index].velocity.x = Math.cos(reflectionAngle);
+			interactiveBalls[index].velocity.y = Math.sin(reflectionAngle);
+		}
+	}
+}
+
 function setRaycasterFromController(raycaster, controller){
 	controller.updateMatrixWorld();
 	tempMatrix.identity().extractRotation( controller.matrixWorld );
 	raycaster.ray.origin.setFromMatrixPosition( controller.matrixWorld );
 	raycaster.ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );
+}
+
+function setRaycastersFromPlayer(){
+	dummyCam.updateMatrixWorld();
+	tempMatrix.identity().extractRotation( dummyCam.matrixWorld );
+	moveRaycasters[0].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[0].ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );	
+	moveRaycasters[1].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[1].ray.direction.set( 1, 0, 0 ).applyMatrix4( tempMatrix );
+	moveRaycasters[2].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[2].ray.direction.set( 0, 0, 1 ).applyMatrix4( tempMatrix );
+	moveRaycasters[3].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[3].ray.direction.set( -1, 0, 0 ).applyMatrix4( tempMatrix );
 }
 
 const createOtherPlayer = () => {
