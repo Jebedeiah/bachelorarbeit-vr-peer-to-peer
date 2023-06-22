@@ -11,7 +11,10 @@ let redBase, blueBase;
 let redBaseBB, blueBaseBB;
 let redFlag, blueFlag;
 let redFlagBB, blueFlagBB;
-let flag_in_base = true;
+let enemy_flag_in_base = true;
+let allied_flag_in_base = true;
+let flag_in_possession = false;
+let reset_flag = false;
 const xBoundary_player = 28;
 const zBoundary_player = 43;
 let dolly;
@@ -47,7 +50,7 @@ const clock = new THREE.Clock();
 let mixers = [];
 let activeActions = []
 let prevActions = [];
-let mixer, clips, clip, grabClip, throwClip, activeAction, grabAction, throwAction;
+let mixer, clips, clip, grabClip, throwClip, activeAction, grabAction, throwAction, grabActionOther, throwActionOther;
 let throwing = false;
 let taking = false;
 let group = new THREE.Group();
@@ -70,27 +73,21 @@ window.addEventListener('DOMContentLoaded', () => {
 // Three.js Code
 async function init(){
 	// GLTF Loader
-	const robotData = await gltfLoader.loadAsync( 'public/models/robot_animations.glb');
+	const robotData = await gltfLoader.loadAsync( '/models/robot_animations.glb');
 	robot = robotData.scene;
-	robot.traverse((obj) => {
-			if(obj.isMesh){
-				obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF})					
-			}
-		}			
-	)
 	robot.rotation.y += Math.PI;
 	player = SkeletonUtils.clone(robot);
 
-	const flagData = await gltfLoader.loadAsync( 'public/models/base_flag.glb');
+	const flagData = await gltfLoader.loadAsync( '/models/base_flag.glb');
 	baseFlag = flagData.scene;
 	baseFlag.castShadow = true;
 	
-	const floorTexture = textureLoader.load('public/textures/floor_tiles.jpg');
+	const floorTexture = textureLoader.load('/textures/floor_tiles.jpg');
 	floorTexture.wrapS = THREE.RepeatWrapping;
 	floorTexture.wrapT = THREE.RepeatWrapping;
 	floorTexture.repeat.set(2, 4);
 
-	const wallTexture = textureLoader.load('public/textures/wall_stones2.jpg');
+	const wallTexture = textureLoader.load('/textures/wall_stones2.jpg');
 	wallTexture.wrapS = THREE.RepeatWrapping;
 	wallTexture.wrapT = THREE.RepeatWrapping;
 	wallTexture.repeat.set(2, 1);
@@ -442,6 +439,7 @@ function decidePlayerPosition(amountConnected) {
 	if(amountConnected === 1) {
 		dolly.position.set(25, 0, -40);
 		teamColor = "blue"
+		dolly.rotation.y += Math.PI;
 	}
 	else if(amountConnected === 2) {
 		dolly.position.set(25, 0, 40);
@@ -450,44 +448,24 @@ function decidePlayerPosition(amountConnected) {
 	else if(amountConnected === 3) {
 		dolly.position.set(-25, 0, -40);
 		teamColor = "blue"
+		dolly.rotation.y += Math.PI;
 	}
 }
 
-const receiveData = () => {
+function receiveData() {
 	for(let i = 0; i < conns.length; i++){
 		
 		conns[i].on('data', (data) => {	
-			// other players current position and looking direction
-			otherPlayers[i].position.set(data[0].x, 0.04, data[0].z);
-			otherPlayers[i].rotation.y = data[1] * -1;
-
-			//Play walk, grab and throw animations of other playes
+			orientOtherPlayers(i, data[0], data[1]);
 			playWalkAnimation(data[2], i);
-			if(data[3]){
-				grabAction = mixers[i].clipAction(grabClip);
-				grabAction.setLoop(THREE.LoopOnce);
-				grabAction.setEffectiveTimeScale(1.5);
-				grabAction.play();
-				grabAction.reset();
-			}
-			if(data[4]){
-				grabAction.stop();
-				throwAction = mixers[i].clipAction(throwClip);
-				throwAction.setLoop(THREE.LoopOnce);
-				throwAction.setEffectiveTimeScale(1.3);
-				throwAction.play();
-				throwAction.reset();
-			}
-			for(let ballData of data[5]){
-				interactiveBalls[ballData[0]].position.copy(ballData[1]);
-				interactiveBalls[ballData[0]].isMoving = ballData[2];
-			}
-			if(data[6]){
-				otherPlayersCages[i].position.set(data[0].x, 0.94, data[0].z);
-				otherPlayersCages[i].visible = true;
-			} else{ otherPlayersCages[i].visible = false; }
+			playOthersGrabAnimation(data[3], i)
+			playOthersThrowAnimation(data[4], i)
+			ballsMovedByOthers(data[5])
+			showOthersCages(data[6], i, data[0])
+			moveFlags(data[7]);
+			resetFlags(data[8]);
 		});
-	}	
+	}
 }	
 
 // Send player data to all current connections
@@ -495,15 +473,98 @@ function sendPlayerData() {
 	let cameraPos = new THREE.Vector3();
 	let cameraQuat = new THREE.Quaternion();
 	let ballPosData = getBallPos();
+	let flagData;	
+	if(flag_in_possession) {
+		flagData = getFlagPos();
+	}
 	dummyCam.getWorldPosition(cameraPos);
 	dummyCam.getWorldQuaternion(cameraQuat);
 	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 	euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData, playerHit];
+	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData, playerHit, flagData, reset_flag];
 	taking = false;
 	throwing = false;
+	reset_flag = false;
 	for(let conn of conns){
 		conn.send(playerData);
+	}
+}
+
+function orientOtherPlayers(index, posData, rotData){
+	// other players current position and looking direction
+	otherPlayers[index].position.set(posData.x, 0.04, posData.z);
+	otherPlayers[index].rotation.y = rotData * -1;
+}
+
+function playOthersGrabAnimation(data, index){
+	if(data){
+		grabActionOther = mixers[index].clipAction(grabClip);
+		grabActionOther.setLoop(THREE.LoopOnce);
+		grabActionOther.setEffectiveTimeScale(1.5);
+		grabActionOther.play();
+		grabActionOther.reset();
+	}	
+}
+
+function playOthersThrowAnimation(data, index){
+	if(data){
+		grabActionOther.stop();
+		throwActionOther = mixers[index].clipAction(throwClip);
+		throwActionOther.setLoop(THREE.LoopOnce);
+		throwActionOther.setEffectiveTimeScale(1.3);
+		throwActionOther.play();
+		throwActionOther.reset();
+	}
+}
+
+function ballsMovedByOthers(data){
+	for(let ballData of data){
+		interactiveBalls[ballData[0]].position.copy(ballData[1]);
+		interactiveBalls[ballData[0]].isMoving = ballData[2];
+	}
+	
+}
+
+function showOthersCages(data, index, othersPos){
+	if(data){
+		otherPlayersCages[index].position.set(othersPos.x, 0.94, othersPos.z);
+		otherPlayersCages[index].visible = true;
+	} else{
+		otherPlayersCages[index].visible = false;
+	}
+}
+
+
+function moveFlags(data){
+	if(data){
+		let flagData = data;
+		if(flagData[0] === "blue" && teamColor === "blue"){
+			allied_flag_in_base = false;
+			blueFlag.position.copy(flagData[1]);
+		}else if (flagData[0] === "blue" && teamColor === "red"){
+			enemy_flag_in_base = false;
+			blueFlag.position.copy(flagData[1]);
+		}
+		if(flagData[0] === "red" && teamColor === "red"){
+			allied_flag_in_base = false;
+			redFlag.position.copy(flagData[1]);
+		} else if(flagData[0] === "red" && teamColor === "blue"){
+			enemy_flag_in_base = false;
+			redFlag.position.copy(flagData[1]);
+		}
+	}
+}
+
+function resetFlags(data){
+	if(data === "blue" && teamColor === "blue"){
+		allied_flag_in_base = true;
+	}else if (data === "blue" && teamColor === "red"){
+		enemy_flag_in_base = true;
+	}
+	if(data === "red" && teamColor === "red"){
+		allied_flag_in_base = true;
+	} else if(data === "blue" && teamColor === "blue"){
+		enemy_flag_in_base = true;
 	}
 }
 
@@ -536,31 +597,72 @@ function getBallPos(){
 	return ballPosData;
 }
 
+function getFlagPos(){
+	if(teamColor === "red"){
+		let flagPos = new THREE.Vector3();
+		let flagData = [];
+		blueFlag.getWorldPosition(flagPos);
+		flagData.push("blue");
+		flagData.push(flagPos);
+		
+		return flagData;
+	}
+	
+	if(teamColor === "blue"){
+		let flagPos = new THREE.Vector3();
+		let flagData = [];
+		redFlag.getWorldPosition(flagPos);
+		flagData.push("red");
+		flagData.push(flagPos);
+
+		return flagData;
+	}
+}
+
 function playAnimation(name){
 	clip = THREE.AnimationClip.findByName(clips, name);
 	activeAction = mixer.clipAction(clip);
 }
 
 function floatingFlags(){
-	if(flag_in_base){
+	if(enemy_flag_in_base && teamColor === "red"){
+		const amplitude = 0.2;
+		const frequency = 0.003;		
+		blueFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), -40);
+		blueFlagBB.setFromObject(blueFlag);
+	}
+	if(enemy_flag_in_base && teamColor === "blue"){
 		const amplitude = 0.2;
 		const frequency = 0.003;
 		redFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), 40);
 		redFlagBB.setFromObject(redFlag);
+	}
+	if(allied_flag_in_base && teamColor === "red"){
+		const amplitude = 0.2;
+		const frequency = 0.003;
+		redFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), 40);
+		redFlagBB.setFromObject(redFlag);
+	}
+	if(allied_flag_in_base && teamColor === "blue"){
+		const amplitude = 0.2;
+		const frequency = 0.003;		
 		blueFlag.position.set(0, (amplitude * Math.sin(frequency * Date.now()) + 1), -40);
 		blueFlagBB.setFromObject(blueFlag);
 	}
 }
 
 function collectEnemyFlag(){
-	if(teamColor === "red" && cageBB.intersectsBox(blueFlagBB)){
-		flag_in_base = false;
+	if(teamColor === "red" && enemy_flag_in_base === true && cageBB.intersectsBox(blueFlagBB)){
+		flag_in_possession = true;
+		enemy_flag_in_base = false;
 		dolly.attach(blueFlag);
 		blueFlag.position.set(0, 2, 0);
 	}
-
-	if(teamColor === "blue" && cageBB.intersectsBox(redFlagBB)){
-		flag_in_base = false;
+	
+	if(teamColor === "blue" && enemy_flag_in_base === true && cageBB.intersectsBox(redFlagBB)){
+		flag_in_possession = true;
+		enemy_flag_in_base = false;
+		console.log("here", enemy_flag_in_base);
 		dolly.attach(redFlag);
 		redFlag.position.set(0, 2, 0);
 	}
@@ -596,43 +698,38 @@ function updateMoveRaycasters(x, z){
 		const intersects4 = moveRaycasters[3].intersectObject(obstacle);
 		if(intersects1.length > 0 && z < -0.5){
 			newZ = 0;
-			(console.log("frontRay"))
 		}
 		if(intersects2.length > 0 && x > 0.5){
 			newX = 0;
-			(console.log("rightRay"))
 		}
 		if(intersects3.length > 0 && z > 0.5){
 			newZ = 0;
-			(console.log("backRay"))
 		}
 		if(intersects4.length > 0 && x < -0.5){
 			newX = 0;			
-			(console.log("leftRay"))
 		}		
 	}
 	return [newX, newZ];
 }
 
 function grabBall(ball, index){
-	if(controller2.userData.isSelecting === true){
-		if(ball.isMoving){
-			ball.isMoving = false;
+	if(!ball.isMoving){
+		if(controller2.userData.isSelecting === true){
+			if(controller2.children.length < 2){
+				controller2.attach(ball);
+				selectedObject = ball;			
+			}		
+			let vel_dist = calculateBallVelocityAndDistance(selectedObject, index);
+			selectedObject.velocity.copy(vel_dist[0]);
+			selectedObject.distance = vel_dist[1];
+	
+		} else if (selectedObject && controller2.userData.isSelecting === false){
+			group.attach(selectedObject);
+			if(selectedObject.distance > 0.0001 || selectedObject.position.y > 1){
+				selectedObject.isMoving = true;
+			}
+			selectedObject = null;
 		}
-		if(controller2.children.length < 2){
-		controller2.attach(ball);	
-		selectedObject = ball;
-		}		
-		let vel_dist = calculateBallVelocityAndDistance(selectedObject, index);
-		selectedObject.velocity.copy(vel_dist[0]);
-		selectedObject.distance = vel_dist[1];
-
-	} else if (selectedObject && controller2.userData.isSelecting === false){
-		group.attach(selectedObject);
-		if(selectedObject.distance > 0.0001 || selectedObject.position.y > 1){
-			selectedObject.isMoving = true;
-		}
-		selectedObject = null;		
 	}
 }
 
@@ -675,15 +772,27 @@ function moveBall(){
 function checkPlayerHit(){
 	cageBB.setFromObject(cage);
 	for(let i = 0; i < interactiveBallBBs.length; i++){
-		if(interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB) && !cage.visible){
+		if(!cage.visible && interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB)){
 			cage.visible = true;
 			playerHit = true;
-			setTimeout(continueMovement, 3000);
+			if(flag_in_possession) {
+				enemy_flag_in_base = true;
+				flag_in_possession = false;
+				if(teamColor === "red"){
+					group.attach(blueFlag);
+					reset_flag ="blue";
+				}	
+				if(teamColor === "blue") {
+					group.attach(redFlag);
+					reset_flag = "red";
+				}
+			}
+			setTimeout(continueMovementAfterHit, 3000);
 		}
 	}
 }
 
-function continueMovement(){
+function continueMovementAfterHit(){
 	playerHit = false;
 	cage.visible = false;
 }
@@ -698,17 +807,21 @@ function ball_walltouch(index){
 }
 
 function ball_obstacletouch(index){
-	for(let boxBB of obstacleBBs){
-		if(interactiveBallBBs[index].intersectsBox(boxBB)){
-			// Einfallswinkel berechnen
-			let incidentAngle = Math.atan2(interactiveBalls[index].velocity.y, interactiveBalls[index].velocity.x);
-
-			// Reflektionswinkel berechnen
-			let reflectionAngle = Math.PI + incidentAngle;	
-	
-			// Ausgangsgeschwindigkeit mit neuem Winkel setzen
-			interactiveBalls[index].velocity.x = Math.cos(reflectionAngle);
-			interactiveBalls[index].velocity.y = Math.sin(reflectionAngle);
+	for(let i = 0; i < obstacles.length; i++){
+		if(interactiveBallBBs[index].intersectsBox(obstacleBBs[i])){
+			const boxCenter = obstacles[i].position.clone();
+			const boxSize = 8;
+			// Check which side gets hit by ball and change velocity accordingly
+			if (interactiveBalls[index].position.x < boxCenter.x - boxSize / 2 || interactiveBalls[index].position.x > boxCenter.x + boxSize / 2) {
+				interactiveBalls[index].velocity.x *= -0.5;
+			}
+			if (interactiveBalls[index].position.y < boxCenter.y - 10 / 2 || interactiveBalls[index].position.y > boxCenter.y + 10 / 2) {
+				interactiveBalls[index].velocity.y *= -0.5; 
+			}
+			if (interactiveBalls[index].position.z < boxCenter.z - boxSize / 2 || interactiveBalls[index].position.z > boxCenter.z + boxSize / 2) {
+				interactiveBalls[index].velocity.z *= -0.5; 
+			}
+			interactiveBalls[index].position.add(interactiveBalls[index].velocity);
 		}
 	}
 }
@@ -733,10 +846,17 @@ function setRaycastersFromPlayer(){
 	moveRaycasters[3].ray.direction.set( -1, 0, 0 ).applyMatrix4( tempMatrix );
 }
 
-const createOtherPlayer = () => {
+function createOtherPlayer() {
 	// Create other Player in Scene
 	// const oppMaterial = new THREE.MeshStandardMaterial( {color: 0xffff00} );
 	let opponent = SkeletonUtils.clone(robot);
+	let material = decideOthersTeamColor();
+	opponent.traverse((obj) => {
+		if(obj.isMesh){
+				obj.material = material;				
+			}
+		}
+	)	
 	const oppMixer = new THREE.AnimationMixer(opponent);
 	scene.add(opponent);
 	otherPlayers.push(opponent);
@@ -750,6 +870,20 @@ const createOtherPlayer = () => {
 	prevActions.push(preAction);
 	mixers.push(oppMixer);
 	actAction.play();
+}
+
+function decideOthersTeamColor(){
+	let material;
+	if(otherPlayers.length === 0) {
+		material = new THREE.MeshStandardMaterial({color: 0xD22B2B});		
+	}else if(teamColor === "red"){
+		material = new THREE.MeshStandardMaterial({color: 0x0096FF});	
+	}else if(otherPlayers.length === 1){
+		material = new THREE.MeshStandardMaterial({color: 0x0096FF});	
+	}else if(otherPlayers.length === 2){
+		material = new THREE.MeshStandardMaterial({color: 0xD22B2B});	
+	}
+	return material;
 }
 
 function playWalkAnimation(name, index){

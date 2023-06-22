@@ -1,9 +1,10 @@
 {
-  "dependencies": {    
+  "dependencies": {
     "peerjs": "^1.4.7",
     "three": "^0.151.0"
   },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.0.1",
     "vite": "^4.2.1"
   }
 }
