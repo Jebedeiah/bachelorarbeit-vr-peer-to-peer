@@ -15,6 +15,8 @@ let enemy_flag_in_base = true;
 let allied_flag_in_base = true;
 let flag_in_possession = false;
 let reset_flag = false;
+let points = 0;
+let gameOver = false;
 const xBoundary_player = 28;
 const zBoundary_player = 43;
 let dolly;
@@ -212,6 +214,7 @@ async function init(){
 		ball.position.z = 0;
 		ball.position.y = floorHeight;
 		ball.isMoving = false;
+		ball.isTraveling = false;
 		ball.velocity = new THREE.Vector3();
 		ball.distance = 0;
 		ball.castShadow = true;
@@ -445,7 +448,8 @@ function render(){
 	sendPlayerData();
 	updateMixers(deltaTime);
 	floatingFlags();
-	collectEnemyFlag()
+	collectEnemyFlag();
+	flagCaptured();
 	renderer.render( scene, camera );
 }
 
@@ -546,7 +550,7 @@ function playOthersThrowAnimation(data, index){
 function ballsMovedByOthers(data){
 	for(let ballData of data){
 		interactiveBalls[ballData[0]].position.copy(ballData[1]);
-		interactiveBalls[ballData[0]].isMoving = ballData[2];
+		interactiveBalls[ballData[0]].isTraveling = ballData[2];
 	}
 	
 }
@@ -559,7 +563,6 @@ function showOthersCages(data, index, othersPos){
 		otherPlayersCages[index].visible = false;
 	}
 }
-
 
 function moveFlags(data){
 	if(data){
@@ -597,10 +600,10 @@ function resetFlags(data){
 function getBallPos(){
 	let ballPosData = [];
 	for(let i = 0; i < interactiveBalls.length; i++){		
-		if(interactiveBalls[i].distance > 0.0001){			
+		if(interactiveBalls[i].distance > 0.01){			
 			let ballWorldPos = new THREE.Vector3();
 			interactiveBalls[i].getWorldPosition(ballWorldPos);
-			let data = [i, ballWorldPos, interactiveBalls[i].isMoving];
+			let data = [i, ballWorldPos, interactiveBalls[i].isTraveling];
 			ballPosData.push(data);
 		}		
 	}
@@ -655,6 +658,18 @@ function collectEnemyFlag(){
 		enemy_flag_in_base = false;
 		dolly.attach(blueFlag);
 		blueFlag.position.set(0, 2, 0);
+	}
+}
+
+function flagCaptured(){
+	if(flag_in_possession && cageBB.intersectsBox(redBaseBB)){
+		flag_in_possession = false;
+		enemy_flag_in_base = true;
+		reset_flag = "blue";
+		group.attach(blueFlag);
+		points++;
+		if(points === 3) gameOver = true;
+		console.log(points);
 	}
 }
 
@@ -716,7 +731,8 @@ function grabBall(ball, index){
 		} else if (selectedObject && controller2.userData.isSelecting === false){
 			group.attach(selectedObject);
 			if(selectedObject.distance > 0.0001 || selectedObject.position.y > 1){
-				selectedObject.isMoving = true;
+				selectedObject.isMoving = true;				
+				selectedObject.isTraveling = true;				
 			}
 			selectedObject = null;
 		}
@@ -751,6 +767,7 @@ function moveBall(){
 			}
 			if(ball.distance < 0.025 && ball.position.y === floorHeight){
 				ball.isMoving = false;
+				ball.isTraveling = false;
 			}
 			interactiveBallBBs[i].setFromObject(ball);
 			ball_walltouch(i);
@@ -762,9 +779,11 @@ function moveBall(){
 function checkPlayerHit(){
 	cageBB.setFromObject(cage);
 	for(let i = 0; i < interactiveBallBBs.length; i++){
-		if(!cage.visible && interactiveBalls[i].isMoving && interactiveBallBBs[i].intersectsBox(cageBB)){
+		interactiveBallBBs[i].setFromObject(interactiveBalls[i]);
+		if(!cage.visible && interactiveBalls[i].isTraveling && interactiveBallBBs[i].intersectsBox(cageBB)){
 			cage.visible = true;
 			playerHit = true;
+			interactiveBalls[i].isTraveling = false;
 			if(flag_in_possession) {
 				enemy_flag_in_base = true;
 				flag_in_possession = false;
@@ -836,18 +855,20 @@ function createOtherPlayer() {
 	if(connectedPlayers === 1 || connectedPlayers === 3){
 		opponent.traverse((obj) => {
 			if(obj.isMesh){
-					obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF});				
+					obj.material = new THREE.MeshStandardMaterial({color: 0x0096FF});
+					obj.castShadow = true;
 				}
 			}			
 		)
 	}else{
 		opponent.traverse((obj) => {
 			if(obj.isMesh){
-					obj.material = new THREE.MeshStandardMaterial({color: 0xD22B2B});				
+					obj.material = new THREE.MeshStandardMaterial({color: 0xD22B2B});
+					obj.castShadow = true;	
 				}
 			}			
 		)
-	}	
+	}
 	const oppMixer = new THREE.AnimationMixer(opponent);
 	scene.add(opponent);
 	otherPlayers.push(opponent);
