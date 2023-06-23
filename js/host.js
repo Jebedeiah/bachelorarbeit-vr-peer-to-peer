@@ -75,21 +75,21 @@ window.addEventListener('DOMContentLoaded', () => {
 // Three.js Code
 async function init(){
 	// GLTF Loader
-	const robotData = await gltfLoader.loadAsync( '/models/robot_animations.glb');
+	const robotData = await gltfLoader.loadAsync( './public/models/robot_animations.glb');
 	robot = robotData.scene;
 	robot.rotation.y += Math.PI;
 	player = SkeletonUtils.clone(robot);
 
-	const flagData = await gltfLoader.loadAsync( '/models/base_flag.glb');
+	const flagData = await gltfLoader.loadAsync( './public/models/base_flag.glb');
 	baseFlag = flagData.scene;
 	baseFlag.castShadow = true;
 	
-	const floorTexture = textureLoader.load('/textures/floor_tiles.jpg');
+	const floorTexture = textureLoader.load('./public/textures/floor_tiles.jpg');
 	floorTexture.wrapS = THREE.RepeatWrapping;
 	floorTexture.wrapT = THREE.RepeatWrapping;
 	floorTexture.repeat.set(2, 4);
 
-	const wallTexture = textureLoader.load('/textures/wall_stones2.jpg');
+	const wallTexture = textureLoader.load('./public/textures/wall_stones2.jpg');
 	wallTexture.wrapS = THREE.RepeatWrapping;
 	wallTexture.wrapT = THREE.RepeatWrapping;
 	wallTexture.repeat.set(2, 1);
@@ -293,6 +293,7 @@ async function init(){
 	dummyCam = new THREE.Group();
 
 	createMoveRaycasters();
+	window.addEventListener( 'resize', onWindowResize, false );
 	
     dolly.position.set(-25, 0, 40);
     scene.add(dolly);
@@ -904,4 +905,12 @@ function updateMixers(deltaTime){
 	for(let mixer of mixers){
 		mixer.update(deltaTime);
 	}
+}
+
+function onWindowResize() {
+	camera.aspect = window.innerWidth / window.innerHeight;
+	camera.updateProjectionMatrix();
+
+	renderer.setSize( window.innerWidth, window.innerHeight );
+
 }
