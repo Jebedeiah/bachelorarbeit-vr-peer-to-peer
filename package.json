@@ -1,7 +1,8 @@
 {
   "dependencies": {
     "peerjs": "^1.4.7",
-    "three": "^0.153.0"
+    "three": "^0.153.0",
+    "three-mesh-ui": "^6.5.4"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.0.1",

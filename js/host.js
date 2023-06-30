@@ -2,21 +2,26 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import ThreeMeshUI from 'https://cdn.skypack.dev/three-mesh-ui';
 
 //Three variables
-let camera, dummyCam, scene, renderer;
+let camera, xrCamera, scene, renderer;
 let wall, wall2, wall3, wall4;
 let redBase, blueBase;
-let redBaseBB, blueBaseBB;
+let redBaseBB;
 let redFlag, blueFlag;
 let redFlagBB, blueFlagBB;
+let redText, blueText, redText2, blueText2, winText1, winText2;
 let enemy_flag_in_base = true;
 let allied_flag_in_base = true;
 let flag_in_possession = false;
 let reset_flag = false;
-let points = 0;
-let gameOver = false;
+let flagIsCaptured = false;
+let redPoints = 0;
+let bluePoints = 0;
+let gameIsOver = true;
 const xBoundary_player = 28;
 const zBoundary_player = 43;
 let dolly;
@@ -67,6 +72,7 @@ let connectedPlayers = 0;
 
 const gltfLoader = new GLTFLoader();
 const textureLoader = new THREE.TextureLoader();
+const fontLoader = new FontLoader();
 
 window.addEventListener('DOMContentLoaded', () => {
 	init();			
@@ -93,7 +99,7 @@ async function init(){
 	wallTexture.wrapS = THREE.RepeatWrapping;
 	wallTexture.wrapT = THREE.RepeatWrapping;
 	wallTexture.repeat.set(2, 1);
-	
+
 	mixer = new THREE.AnimationMixer(player);
 	clips = robotData.animations;
 	clip = THREE.AnimationClip.findByName(clips, "idle");
@@ -110,16 +116,15 @@ async function init(){
 	throwAction.setEffectiveTimeScale(1.3);
 	
 	scene = new THREE.Scene();
+	renderer = new THREE.WebGLRenderer({antialias: true});
 	camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 0.1, 500 );
-	renderer = new THREE.WebGLRenderer();
 	renderer.setSize( window.innerWidth, window.innerHeight );
-	renderer.outputColorSpace = THREE.SRGBColorSpace;
 	document.body.appendChild( renderer.domElement );
 	document.body.appendChild( VRButton.createButton( renderer ) );
 	renderer.xr.enabled = true;
 	renderer.shadowMap.enabled = true;
 	scene.add(group);
-
+	
 	scene.background = new THREE.Color( 0x505050 );
 	const ambientLight = new THREE.AmbientLight( 0x404040 ); // soft white directionalLight
 	scene.add( ambientLight )
@@ -179,7 +184,6 @@ async function init(){
 	blueBase = new THREE.Mesh(new THREE.BoxGeometry(10, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0x0000ff, opacity: 0.5, transparent: true, side: THREE.DoubleSide }));
 	blueBase.castShadow = false;
 	blueBase.position.set(0, 0.25, -40);
-	blueBaseBB = new THREE.Box3().setFromObject(blueBase);
 	scene.add(blueBase);
 
 	// Add base flags
@@ -290,7 +294,7 @@ async function init(){
 	scene.add( controllerGrip2 );
 
 	dolly = new THREE.Group();
-	dummyCam = new THREE.Group();
+	xrCamera = new THREE.Group();
 
 	createMoveRaycasters();
 	window.addEventListener( 'resize', onWindowResize, false );
@@ -298,12 +302,15 @@ async function init(){
     dolly.position.set(-25, 0, 40);
     scene.add(dolly);
     dolly.add(camera);
-	camera.add(dummyCam);
+	camera.add(xrCamera);
     dolly.add(controller1);
     dolly.add(controller2);
     dolly.add(controllerGrip1);
     dolly.add(controllerGrip2);
 	dolly.add(cage);
+	
+	makeTextPanel1();
+	makeTextPanel2();
 
 	animate();
 }
@@ -425,9 +432,9 @@ function moveCameraWithJoystick(x, z) {
 	const newX = newXZ[0];
 	const newZ = newXZ[1];
     const quaternion = dolly.quaternion.clone();
-    dummyCam.getWorldQuaternion(dolly.quaternion);
-    dolly.translateX(newX * 0.05);
-    dolly.translateZ(newZ * 0.05);
+    dolly.quaternion.copy(xrCamera.quaternion);
+    dolly.translateX(newX * 0.1);
+    dolly.translateZ(newZ * 0.1);
     if (dolly.position.x > xBoundary_player) dolly.position.x = xBoundary_player;
     if (dolly.position.x < -xBoundary_player) dolly.position.x = -xBoundary_player;
     if (dolly.position.z > zBoundary_player) dolly.position.z = zBoundary_player;
@@ -442,6 +449,11 @@ function animate() {
 
 function render(){
 	const deltaTime = clock.getDelta();
+	updateUIPosition();
+	ThreeMeshUI.update();
+	if(renderer.xr.isPresenting){
+		xrCamera = renderer.xr.updateCameraXR(camera);
+	}
 	updateOrientation();
 	updateGrabRaycaster();
 	moveBall();
@@ -451,6 +463,7 @@ function render(){
 	floatingFlags();
 	collectEnemyFlag();
 	flagCaptured();
+	gameOver();
 	renderer.render( scene, camera );
 }
 
@@ -484,19 +497,19 @@ peer.on('connection', (conn) => {
 });
 
 function receiveData() {
-	for(let i = 0; i < conns.length; i++){
+	let i = conns.length - 1;
 		
-		conns[i].on('data', (data) => {	
-			orientOtherPlayers(i, data[0], data[1]);
-			playWalkAnimation(data[2], i);
-			playOthersGrabAnimation(data[3], i)
-			playOthersThrowAnimation(data[4], i)
-			ballsMovedByOthers(data[5])
-			showOthersCages(data[6], i, data[0])
-			moveFlags(data[7]);
-			resetFlags(data[8]);
-		});
-	}
+	conns[i].on('data', (data) => {	
+		orientOtherPlayers(i, data[0], data[1]);
+		playWalkAnimation(data[2], i);
+		playOthersGrabAnimation(data[3], i)
+		playOthersThrowAnimation(data[4], i)
+		ballsMovedByOthers(data[5])
+		showOthersCages(data[6], i, data[0])
+		moveFlags(data[7]);
+		resetFlags(data[8], data[9]);
+		calculateLatency(data[10]);
+	});
 }
 
 // Send player data to all current connections
@@ -508,14 +521,16 @@ function sendPlayerData() {
 	if(flag_in_possession) {
 		flagData = getFlagPos();
 	}
-	dummyCam.getWorldPosition(cameraPos);
-	dummyCam.getWorldQuaternion(cameraQuat);
+	xrCamera.getWorldPosition(cameraPos);
+	xrCamera.getWorldQuaternion(cameraQuat);
 	const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 	euler.setFromQuaternion(cameraQuat, 'YXZ');
-	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData, playerHit, flagData, reset_flag];
+	const timestamp = Date.now();
+	let playerData = [cameraPos, euler.y, activeAction._clip.name, taking, throwing, ballPosData, playerHit, flagData, reset_flag, flagIsCaptured, timestamp];
 	taking = false;
 	throwing = false;
 	reset_flag = false;
+	flagIsCaptured = false;
 	for(let conn of conns){
 		conn.send(playerData);
 	}
@@ -585,17 +600,29 @@ function moveFlags(data){
 	}
 }
 
-function resetFlags(data){
-	if(data === "blue" && teamColor === "blue"){
-		allied_flag_in_base = true;
-	}else if (data === "blue" && teamColor === "red"){
-		enemy_flag_in_base = true;
+function resetFlags(data, captured){
+	if(data){
+		if(data === "blue" && teamColor === "blue"){
+			allied_flag_in_base = true;
+			if(captured) redPoints++;
+		} else if (data === "blue" && teamColor === "red"){
+			enemy_flag_in_base = true;
+			if(captured) redPoints++;
+		} else if(data === "red" && teamColor === "red"){
+			allied_flag_in_base = true;
+			if(captured) bluePoints++;
+		} else if(data === "red" && teamColor === "blue"){
+			enemy_flag_in_base = true;
+			if(captured) bluePoints++;
+		}
 	}
-	if(data === "red" && teamColor === "red"){
-		allied_flag_in_base = true;
-	} else if(data === "blue" && teamColor === "blue"){
-		enemy_flag_in_base = true;
-	}
+}
+
+function calculateLatency(time) {
+	const sendTime = time;
+	const currentTime = Date.now();
+	const latency =  currentTime - sendTime;
+	console.log("Latenz: " + latency + " ms");
 }
 
 function getBallPos(){
@@ -668,9 +695,8 @@ function flagCaptured(){
 		enemy_flag_in_base = true;
 		reset_flag = "blue";
 		group.attach(blueFlag);
-		points++;
-		if(points === 3) gameOver = true;
-		console.log(points);
+		redPoints++;
+		flagIsCaptured = true;
 	}
 }
 
@@ -838,15 +864,15 @@ function setRaycasterFromController(raycaster, controller){
 }
 
 function setRaycastersFromPlayer(){
-	dummyCam.updateMatrixWorld();
-	tempMatrix.identity().extractRotation( dummyCam.matrixWorld );
-	moveRaycasters[0].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	xrCamera.updateMatrixWorld();
+	tempMatrix.identity().extractRotation( xrCamera.matrixWorld );
+	moveRaycasters[0].ray.origin.setFromMatrixPosition( xrCamera.matrixWorld );
 	moveRaycasters[0].ray.direction.set( 0, 0, - 1 ).applyMatrix4( tempMatrix );	
-	moveRaycasters[1].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[1].ray.origin.setFromMatrixPosition( xrCamera.matrixWorld );
 	moveRaycasters[1].ray.direction.set( 1, 0, 0 ).applyMatrix4( tempMatrix );
-	moveRaycasters[2].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[2].ray.origin.setFromMatrixPosition( xrCamera.matrixWorld );
 	moveRaycasters[2].ray.direction.set( 0, 0, 1 ).applyMatrix4( tempMatrix );
-	moveRaycasters[3].ray.origin.setFromMatrixPosition( dummyCam.matrixWorld );
+	moveRaycasters[3].ray.origin.setFromMatrixPosition( xrCamera.matrixWorld );
 	moveRaycasters[3].ray.direction.set( -1, 0, 0 ).applyMatrix4( tempMatrix );
 }
 
@@ -910,7 +936,156 @@ function updateMixers(deltaTime){
 function onWindowResize() {
 	camera.aspect = window.innerWidth / window.innerHeight;
 	camera.updateProjectionMatrix();
-
 	renderer.setSize( window.innerWidth, window.innerHeight );
+}
 
+function makeTextPanel1() {
+	const container = new ThreeMeshUI.Block({
+		width: 55,
+		height: 10,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	scene.add( container );
+	container.position.set(0, 35, 0);
+
+	redText = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 8,
+		fontColor: new THREE.Color( 0xff0000 )
+	});
+
+	blueText = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 8,
+		fontColor: new THREE.Color( 0x0000ff )
+	});
+
+	container.add(
+		redText, blueText
+	);
+}
+function makeTextPanel2() {
+	const container = new ThreeMeshUI.Block({
+		width: 55,
+		height: 10,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	scene.add( container );
+	container.position.set(0, 35, 0);
+	container.rotation.y += Math.PI;
+
+	redText2 = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 8,
+		fontColor: new THREE.Color( 0xff0000 )
+	});
+
+	blueText2 = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 8,
+		fontColor: new THREE.Color( 0x0000ff )
+	});
+
+	container.add(
+		redText2, blueText2
+	);
+}
+
+function makeWinPanel1() {
+	const container = new ThreeMeshUI.Block({
+		width: 55,
+		height: 7,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	scene.add( container );
+	container.position.set(0, 10, 0);
+
+	winText1 = new ThreeMeshUI.Text({
+		fontSize: 6
+	});
+
+	container.add(
+		winText1
+	);
+}
+function makeWinPanel2() {
+	const container = new ThreeMeshUI.Block({
+		width: 55,
+		height: 7,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	scene.add( container );
+	container.position.set(0, 10, 0);
+	container.rotation.y += Math.PI;
+
+	winText2 = new ThreeMeshUI.Text({
+		fontSize: 6		
+	});
+
+	container.add(
+		winText2
+	);
+}
+
+function updateUIPosition() {
+	redText.set({
+		content: redPoints + " Red "
+	});
+	blueText.set({
+		content: " Blue " + bluePoints
+	});
+	redText2.set({
+		content: redPoints + " Red "
+	});
+	blueText2.set({
+		content: " Blue " + bluePoints
+	});
+}
+
+function gameOver() {
+	if(redPoints === 3 || bluePoints === 3){
+		for(let obstacle of obstacles){
+			if(obstacle.position.y < 50) obstacle.position.y += 0.1;
+		}
+		if(gameIsOver){
+			gameIsOver = false;
+			makeWinPanel1();
+			makeWinPanel2();
+			if(bluePoints === 3) {
+				winText1.set({
+					content: "BLUE TEAM WINS",
+					fontColor: new THREE.Color( 0x0000ff )
+				});
+				winText2.set({
+					content: "BLUE TEAM WINS",
+					fontColor: new THREE.Color( 0x0000ff )
+				});
+			} else if(redPoints === 3){
+				winText1.set({
+					content: "RED TEAM WINS",
+					fontColor: new THREE.Color( 0xff0000 )
+				});
+				winText2.set({
+					content: "RED TEAM WINS",
+					fontColor: new THREE.Color( 0xff0000 )
+				});
+			}
+		}
+	}
 }
