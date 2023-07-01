@@ -13,7 +13,7 @@ let redBase, blueBase;
 let redBaseBB;
 let redFlag, blueFlag;
 let redFlagBB, blueFlagBB;
-let redText, blueText, redText2, blueText2, winText1, winText2;
+let redText, blueText, redText2, blueText2, winText1, winText2, latencyText, latencyText2;
 let enemy_flag_in_base = true;
 let allied_flag_in_base = true;
 let flag_in_possession = false;
@@ -22,6 +22,7 @@ let flagIsCaptured = false;
 let redPoints = 0;
 let bluePoints = 0;
 let gameIsOver = true;
+let latency, latencyDelay;
 const xBoundary_player = 28;
 const zBoundary_player = 43;
 let dolly;
@@ -311,6 +312,7 @@ async function init(){
 	
 	makeTextPanel1();
 	makeTextPanel2();
+	setInterval(calculateLatency, 400);
 
 	animate();
 }
@@ -433,8 +435,8 @@ function moveCameraWithJoystick(x, z) {
 	const newZ = newXZ[1];
     const quaternion = dolly.quaternion.clone();
     dolly.quaternion.copy(xrCamera.quaternion);
-    dolly.translateX(newX * 0.1);
-    dolly.translateZ(newZ * 0.1);
+    dolly.translateX(newX * 0.05);
+    dolly.translateZ(newZ * 0.05);
     if (dolly.position.x > xBoundary_player) dolly.position.x = xBoundary_player;
     if (dolly.position.x < -xBoundary_player) dolly.position.x = -xBoundary_player;
     if (dolly.position.z > zBoundary_player) dolly.position.z = zBoundary_player;
@@ -508,7 +510,7 @@ function receiveData() {
 		showOthersCages(data[6], i, data[0])
 		moveFlags(data[7]);
 		resetFlags(data[8], data[9]);
-		calculateLatency(data[10]);
+		if(i === 0) latency = Date.now() - data[10];
 	});
 }
 
@@ -618,11 +620,8 @@ function resetFlags(data, captured){
 	}
 }
 
-function calculateLatency(time) {
-	const sendTime = time;
-	const currentTime = Date.now();
-	const latency =  currentTime - sendTime;
-	console.log("Latenz: " + latency + " ms");
+function calculateLatency() {
+	latencyDelay = latency;
 }
 
 function getBallPos(){
@@ -944,13 +943,33 @@ function makeTextPanel1() {
 		width: 55,
 		height: 10,
 		justifyContent: 'center',
-		alignItems: 'start',
+		alignItems: 'end',
 		fontFamily: './public/fonts/Roboto-msdf.json',
 		fontTexture: './public/fonts/Roboto-msdf.png'
 	});
 
 	scene.add( container );
 	container.position.set(0, 35, 0);
+
+	const textContainer = new ThreeMeshUI.Block({
+		width: 55,
+		height: 8,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	const latencyContainer = new ThreeMeshUI.Block({
+		width: 8,
+		height: 1,
+		justifyContent: 'center',
+		alignItems: 'start',
+		textAlign: "right",
+		padding: 0.4,
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
 
 	redText = new ThreeMeshUI.Text({
 		content: "",
@@ -964,7 +983,19 @@ function makeTextPanel1() {
 		fontColor: new THREE.Color( 0x0000ff )
 	});
 
+	latencyText = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 1,
+		fontColor: new THREE.Color( 0xaaaaaa )
+	});
+
 	container.add(
+		latencyContainer, textContainer, 
+	);
+	latencyContainer.add(
+		latencyText
+	);
+	textContainer.add(
 		redText, blueText
 	);
 }
@@ -973,7 +1004,7 @@ function makeTextPanel2() {
 		width: 55,
 		height: 10,
 		justifyContent: 'center',
-		alignItems: 'start',
+		alignItems: 'end',
 		fontFamily: './public/fonts/Roboto-msdf.json',
 		fontTexture: './public/fonts/Roboto-msdf.png'
 	});
@@ -981,6 +1012,26 @@ function makeTextPanel2() {
 	scene.add( container );
 	container.position.set(0, 35, 0);
 	container.rotation.y += Math.PI;
+
+	const textContainer = new ThreeMeshUI.Block({
+		width: 55,
+		height: 8,
+		justifyContent: 'center',
+		alignItems: 'start',
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
+
+	const latencyContainer = new ThreeMeshUI.Block({
+		width: 8,
+		height: 1,
+		justifyContent: 'center',
+		alignItems: 'start',
+		textAlign: "right",
+		padding: 0.4,
+		fontFamily: './public/fonts/Roboto-msdf.json',
+		fontTexture: './public/fonts/Roboto-msdf.png'
+	});
 
 	redText2 = new ThreeMeshUI.Text({
 		content: "",
@@ -994,7 +1045,19 @@ function makeTextPanel2() {
 		fontColor: new THREE.Color( 0x0000ff )
 	});
 
+	latencyText2 = new ThreeMeshUI.Text({
+		content: "",
+		fontSize: 1,
+		fontColor: new THREE.Color( 0xaaaaaa )
+	});
+
 	container.add(
+		latencyContainer, textContainer, 
+	);
+	latencyContainer.add(
+		latencyText2
+	);
+	textContainer.add(
 		redText2, blueText2
 	);
 }
@@ -1056,6 +1119,12 @@ function updateUIPosition() {
 	blueText2.set({
 		content: " Blue " + bluePoints
 	});
+	latencyText.set({
+		content: latencyDelay + " ms"
+	})
+	latencyText2.set({
+		content: latencyDelay + " ms"
+	})
 }
 
 function gameOver() {
